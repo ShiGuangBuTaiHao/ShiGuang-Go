@@ -1,0 +1,32 @@
+{
+  "name": "shiguang-go",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "npm@11.8.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.8.0",
+    "echarts": "^6.0.0",
+    "lucide-vue-next": "^0.468.0",
+    "pinia": "^3.0.0",
+    "vue": "^3.5.40",
+    "vue-router": "^4.6.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.0",
+    "@types/node": "^24.13.3",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/tsconfig": "^0.9.1",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0",
+    "vue-tsc": "^3.3.8"
+  }
+}
