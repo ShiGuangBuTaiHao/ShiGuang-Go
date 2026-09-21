@@ -72,12 +72,14 @@ const engineStatus = ref<EngineStatus | null>(null);
 const analysis = ref<KataGoAnalysis | null>(null);
 const recommendationLoading = ref(false);
 const territoryLoading = ref(false);
+const realtimeAnalysisLoading = ref(false);
 const aiThinking = ref(false);
 const recommendationVisible = ref(false);
 const territoryVisible = ref(false);
 const deadStones = ref<Set<string>>(new Set());
 const moveNumbersEnabled = ref(false);
 const coordinatesEnabled = ref(true);
+const recommendationEnabled = ref(isAiMode.value);
 const boardStyle = ref<BoardStyle>(loadBoardStyle());
 const immersiveEnabled = ref(false);
 const resultModalVisible = ref(false);
@@ -107,18 +109,23 @@ const MIN_AI_RESIGN_MOVES = 75;
 
 let aiRequestToken = 0;
 let analysisRequestToken = 0;
+let realtimeAnalysisSequence = 0;
 let gameGeneration = 0;
 let aiResignStreak = 0;
 
 // Per-turn + per-mode + per-strength cache.
 // The strength is part of the key because search budgets produce different results.
 const analysisCache = new Map<string, KataGoAnalysis>();
-type ClockState = {
+type SideClockState = {
   mainRemaining: number;
   byoYomiRemaining: number;
   byoYomiPeriodsRemaining: number;
 };
-const clock = ref<ClockState>({ mainRemaining: 0, byoYomiRemaining: 0, byoYomiPeriodsRemaining: 0 });
+type ClockState = Record<Stone, SideClockState>;
+const clock = ref<ClockState>({
+  black: { mainRemaining: 0, byoYomiRemaining: 0, byoYomiPeriodsRemaining: 0 },
+  white: { mainRemaining: 0, byoYomiRemaining: 0, byoYomiPeriodsRemaining: 0 },
+});
 const clockSnapshots = new Map<string, ClockState>();
 let clockTimer: ReturnType<typeof setInterval> | undefined;
 let lastClockTick = 0;
@@ -130,7 +137,7 @@ const aiColor = computed(() => (playerColor.value === "black" ? "white" : "black
 const aiTurn = computed(() => isAiMode.value && current.value.currentPlayer === aiColor.value);
 const blackPlayerName = computed(() => (isAiMode.value ? playerColor.value === "black" ? "你" : "KataGo" : "玩家一"));
 const whitePlayerName = computed(() => (isAiMode.value ? playerColor.value === "white" ? "你" : "KataGo" : "玩家二"));
-const analysisBusy = computed(() => recommendationLoading.value || territoryLoading.value);
+const analysisBusy = computed(() => recommendationLoading.value || territoryLoading.value || realtimeAnalysisLoading.value);
 const gameFinished = computed(() => current.value.status === "finished");
 const timelineLocked = computed(
   () =>
@@ -149,8 +156,16 @@ const analysisLocked = computed(
 const passDisabled = computed(
   () => boardLocked.value || current.value.moveNumber === 0 || current.value.handicapRemaining > 0
 );
+const twoPassesAwaitingScore = computed(
+  () => !isAiMode.value && current.value.result?.reason === "two-passes",
+);
 const scoreDisabled = computed(
-  () => !isAiMode.value || current.value.moveNumber < MIN_SCORING_MOVES || boardLocked.value || scoreApplication.value || scoringLoading.value || scoreProposalVisible.value || scoreProposalCooldown.value > 0,
+  () => (!isAiMode.value && !twoPassesAwaitingScore.value && current.value.moveNumber < MIN_SCORING_MOVES)
+    || (boardLocked.value && !twoPassesAwaitingScore.value)
+    || scoreApplication.value
+    || scoringLoading.value
+    || scoreProposalVisible.value
+    || scoreProposalCooldown.value > 0,
 );
 const scoreTitle = computed(() =>
   current.value.moveNumber < MIN_SCORING_MOVES
@@ -209,14 +224,22 @@ watch(
   { immediate: true },
 );
 
-const playerTurn = computed(() => isAiMode.value && current.value.currentPlayer === playerColor.value);
-const timedGame = computed(() => gameSetup.value.timeControl.preset !== "untimed");
-const playerClockLabel = computed(() => formatClock(clock.value.mainRemaining > 0 ? clock.value.mainRemaining : clock.value.byoYomiRemaining));
-const playerClockDetail = computed(() => {
-  if (!timedGame.value) return "不计时";
-  if (clock.value.mainRemaining > 0) return "主时间";
-  return `读秒 ${clock.value.byoYomiPeriodsRemaining}/${gameSetup.value.timeControl.byoYomiPeriods}`;
+const clockOwner = computed<Stone | null>(() => {
+  if (isAiMode.value) return current.value.currentPlayer === playerColor.value ? playerColor.value : null;
+  return current.value.currentPlayer;
 });
+const timedGame = computed(() => gameSetup.value.timeControl.preset !== "untimed");
+function clockLabel(side: Stone): string {
+  const sideClock = clock.value[side];
+  return formatClock(sideClock.mainRemaining > 0 ? sideClock.mainRemaining : sideClock.byoYomiRemaining);
+}
+function clockDetail(side: Stone): string {
+  if (!timedGame.value) return "不计时";
+  if (clock.value[side].mainRemaining > 0) return "主时间";
+  return `读秒 ${clock.value[side].byoYomiPeriodsRemaining}/${gameSetup.value.timeControl.byoYomiPeriods}`;
+}
+const blackClockVisible = computed(() => timedGame.value && (!isAiMode.value || playerColor.value === "black"));
+const whiteClockVisible = computed(() => timedGame.value && (!isAiMode.value || playerColor.value === "white"));
 
 const lastMoveLabel = computed(() => {
   const move = current.value.lastMove;
@@ -351,15 +374,22 @@ function currentClockKey(): string {
 }
 
 function cloneClock(value: ClockState): ClockState {
-  return { ...value };
+  return {
+    black: { ...value.black },
+    white: { ...value.white },
+  };
 }
 
 function initializeClock() {
   const timeControl = gameSetup.value.timeControl;
-  clock.value = {
+  const initialSideClock = {
     mainRemaining: timeControl.mainTimeSeconds,
     byoYomiRemaining: timeControl.byoYomiSeconds,
     byoYomiPeriodsRemaining: timeControl.byoYomiPeriods,
+  };
+  clock.value = {
+    black: { ...initialSideClock },
+    white: { ...initialSideClock },
   };
   clockSnapshots.clear();
   clockSnapshots.set(currentClockKey(), cloneClock(clock.value));
@@ -375,15 +405,16 @@ function restoreClock() {
 }
 
 function resetPlayerByoYomiAfterMove() {
-  if (!timedGame.value || !playerTurn.value) return;
+  const side = clockOwner.value;
+  if (!timedGame.value || !side) return;
   const byoYomiSeconds = gameSetup.value.timeControl.byoYomiSeconds;
-  if (clock.value.mainRemaining <= 0 && clock.value.byoYomiPeriodsRemaining > 0 && byoYomiSeconds > 0) {
-    clock.value.byoYomiRemaining = byoYomiSeconds;
+  if (clock.value[side].mainRemaining <= 0 && clock.value[side].byoYomiPeriodsRemaining > 0 && byoYomiSeconds > 0) {
+    clock.value[side].byoYomiRemaining = byoYomiSeconds;
   }
 }
 
-function playerClockIsRunning(): boolean {
-  return timedGame.value && playerTurn.value && !gameFinished.value && !aiThinking.value;
+function playerClockIsRunning(side: Stone): boolean {
+  return timedGame.value && clockOwner.value === side && !gameFinished.value && !aiThinking.value;
 }
 
 function handlePlayerTimeout() {
@@ -393,7 +424,8 @@ function handlePlayerTimeout() {
 }
 
 function tickClock() {
-  if (!playerClockIsRunning()) {
+  const side = clockOwner.value;
+  if (!side || !playerClockIsRunning(side)) {
     lastClockTick = Date.now();
     return;
   }
@@ -403,19 +435,20 @@ function tickClock() {
   if (elapsed <= 0) return;
 
   const next = cloneClock(clock.value);
-  if (next.mainRemaining > 0) {
-    next.mainRemaining = Math.max(0, next.mainRemaining - elapsed);
-  } else if (next.byoYomiRemaining > 0) {
-    next.byoYomiRemaining = Math.max(0, next.byoYomiRemaining - elapsed);
+  const sideClock = next[side];
+  if (sideClock.mainRemaining > 0) {
+    sideClock.mainRemaining = Math.max(0, sideClock.mainRemaining - elapsed);
+  } else if (sideClock.byoYomiRemaining > 0) {
+    sideClock.byoYomiRemaining = Math.max(0, sideClock.byoYomiRemaining - elapsed);
   }
 
-  if (next.mainRemaining <= 0 && next.byoYomiRemaining <= 0) {
-    if (next.byoYomiPeriodsRemaining > 1) {
-      next.byoYomiPeriodsRemaining -= 1;
-      next.byoYomiRemaining = gameSetup.value.timeControl.byoYomiSeconds;
-    } else if (next.byoYomiPeriodsRemaining === 1) {
-      next.byoYomiPeriodsRemaining = 0;
-      next.byoYomiRemaining = 0;
+  if (sideClock.mainRemaining <= 0 && sideClock.byoYomiRemaining <= 0) {
+    if (sideClock.byoYomiPeriodsRemaining > 1) {
+      sideClock.byoYomiPeriodsRemaining -= 1;
+      sideClock.byoYomiRemaining = gameSetup.value.timeControl.byoYomiSeconds;
+    } else if (sideClock.byoYomiPeriodsRemaining === 1) {
+      sideClock.byoYomiPeriodsRemaining = 0;
+      sideClock.byoYomiRemaining = 0;
       clock.value = next;
       handlePlayerTimeout();
       return;
@@ -539,6 +572,27 @@ async function runAnalysis(
   }
 }
 
+async function requestRealtimeAnalysis() {
+  if (isAiMode.value || gameFinished.value) return;
+  const sequence = ++realtimeAnalysisSequence;
+  const generation = gameGeneration;
+  const moveNumber = current.value.moveNumber;
+  realtimeAnalysisLoading.value = true;
+  try {
+    const result = await runAnalysis("fast", "beginner", undefined, RECOMMENDATION_BUDGETS.low);
+    if (
+      sequence === realtimeAnalysisSequence
+      && generation === gameGeneration
+      && current.value.moveNumber === moveNumber
+      && result
+    ) {
+      analysis.value = result;
+    }
+  } finally {
+    if (sequence === realtimeAnalysisSequence) realtimeAnalysisLoading.value = false;
+  }
+}
+
 function calculateCurrentScore(dead: Set<string>) {
   return calculateScore(current.value.board, dead, gameSetup.value.komi, {
     ruleSet: gameSetup.value.ruleSet,
@@ -610,7 +664,20 @@ function closeScoring(resumeGame = true) {
 }
 
 async function startScoring() {
-  if (!isAiMode.value || current.value.moveNumber < MIN_SCORING_MOVES || gameFinished.value || scoringLoading.value) return;
+  if (scoringLoading.value) return;
+  if (!isAiMode.value) {
+    if (!twoPassesAwaitingScore.value && current.value.moveNumber < MIN_SCORING_MOVES) return;
+    scoringVisible.value = true;
+    territoryVisible.value = false;
+    analysis.value = null;
+    recommendationVisible.value = false;
+    scoringLoading.value = false;
+    scoringError.value = "";
+    scoreDeadStones.value = new Set();
+    updateScorePreview();
+    return;
+  }
+  if (current.value.moveNumber < MIN_SCORING_MOVES || gameFinished.value) return;
   const token = ++scoreRequestToken.value;
   scoringVisible.value = true;
   territoryVisible.value = false;
@@ -658,7 +725,7 @@ async function acceptScoreProposal() {
 
 function confirmScore() {
   const preview = scorePreview.value;
-  if (!preview || !scoreAssessment.value?.stable) return;
+  if (!preview || (isAiMode.value && !scoreAssessment.value?.stable)) return;
   const winner = preview.margin > 0 ? "black" : preview.margin < 0 ? "white" : null;
   const score: GameScore = {
     ...preview,
@@ -1053,7 +1120,11 @@ function confirmPendingAction() {
       resetPlayerByoYomiAfterMove();
       rememberClock();
       game.pass();
-      if (current.value.status === "finished") resultModalVisible.value = true;
+      if (current.value.status === "finished" && twoPassesAwaitingScore.value && !isAiMode.value) {
+        void startScoring();
+      } else if (current.value.status === "finished") {
+        resultModalVisible.value = true;
+      }
       break;
     case "resign":
       invalidateAiRequest();
@@ -1095,12 +1166,14 @@ watch(
     restoreClock();
     if (isAiMode.value && aiTurn.value) {
       void playAiMove();
+    } else if (!isAiMode.value) {
+      void requestRealtimeAnalysis();
     }
   }
 );
 
 watch(gameFinished, (finished) => {
-  if (finished) resultModalVisible.value = true;
+  if (finished && !(twoPassesAwaitingScore.value && !isAiMode.value)) resultModalVisible.value = true;
 });
 
 // ── Lifecycle ──────────────────────────────────────────────────────────
@@ -1115,6 +1188,7 @@ onMounted(async () => {
   await refreshEngineStatus();
   publishHeaderSummary();
   if (aiTurn.value) void playAiMove();
+  else if (!isAiMode.value) void requestRealtimeAnalysis();
 });
 
 onBeforeUnmount(() => {
@@ -1134,6 +1208,14 @@ function openGameSettings() {
   gameSettingsVisible.value = true;
 }
 
+function setRecommendationEnabled(value: boolean) {
+  recommendationEnabled.value = value;
+  if (!value) {
+    recommendationVisible.value = false;
+    recommendationLoading.value = false;
+  }
+}
+
 function setBoardStyle(value: BoardStyle) {
   boardStyle.value = value;
   saveBoardStyle(value);
@@ -1151,12 +1233,12 @@ function exitImmersiveMode() {
       <PlayerHeader
         :black-name="blackPlayerName"
         :white-name="whitePlayerName"
-        :black-time="timedGame && playerColor === 'black' ? playerClockLabel : undefined"
-        :white-time="timedGame && playerColor === 'white' ? playerClockLabel : undefined"
-        :black-clock-detail="playerColor === 'black' ? playerClockDetail : undefined"
-        :white-clock-detail="playerColor === 'white' ? playerClockDetail : undefined"
-        :black-clock-running="playerColor === 'black' && playerClockIsRunning()"
-        :white-clock-running="playerColor === 'white' && playerClockIsRunning()"
+        :black-time="blackClockVisible ? clockLabel('black') : undefined"
+        :white-time="whiteClockVisible ? clockLabel('white') : undefined"
+        :black-clock-detail="blackClockVisible ? clockDetail('black') : undefined"
+        :white-clock-detail="whiteClockVisible ? clockDetail('white') : undefined"
+        :black-clock-running="playerClockIsRunning('black')"
+        :white-clock-running="playerClockIsRunning('white')"
         :move-number="current.moveNumber"
         :current-player="current.currentPlayer"
         :last-move-label="lastMoveLabel"
@@ -1205,6 +1287,8 @@ function exitImmersiveMode() {
         :territory-visible="territoryVisible"
         v-model:moveNumbersEnabled="moveNumbersEnabled"
         :locked="analysisLocked"
+        :recommendation-enabled="recommendationEnabled"
+        :analysis-default-visible="isAiMode"
         :engine-status="engineStatus"
         :recommendation-loading="recommendationLoading"
         :territory-loading="territoryLoading"
@@ -1252,9 +1336,9 @@ function exitImmersiveMode() {
           <h2 id="scoring-title">正在数子</h2>
           <p class="result-modal-hint">KataGo 正在确认终局状态，请稍候</p>
         </div>
-        <template v-else-if="scoreAssessment?.stable">
+        <template v-else-if="!isAiMode || scoreAssessment?.stable">
           <h2 id="scoring-title">{{ scorePreview ? scoreSummary(scorePreview) : "数子完成" }}</h2>
-          <p class="score-state stable">局面稳定，可以确认结果</p>
+          <p class="score-state stable">{{ isAiMode ? "局面稳定，可以确认结果" : "双方确认棋块后，可以确认结果" }}</p>
           <p class="result-modal-hint">点击棋块可标记为死子，再次点击恢复。</p>
         </template>
         <template v-else>
@@ -1266,7 +1350,7 @@ function exitImmersiveMode() {
         <p v-if="scoringError" class="score-error" role="alert">{{ scoringError }}</p>
       </div>
       <div class="result-modal-actions result-modal-actions-separated">
-        <template v-if="scoreAssessment?.stable && !scoringLoading">
+        <template v-if="(!isAiMode || scoreAssessment?.stable) && !scoringLoading">
           <button class="result-action" type="button" @click="() => closeScoring()">继续对局</button>
           <button class="result-action primary" type="button" :disabled="!scorePreview" @click="confirmScore">确认结果</button>
         </template>
@@ -1279,11 +1363,14 @@ function exitImmersiveMode() {
     :open="gameSettingsVisible"
     :coordinates-enabled="coordinatesEnabled"
     :immersive-enabled="immersiveEnabled"
+    :local-mode="!isAiMode"
+    :recommendation-enabled="recommendationEnabled"
     :board-style="boardStyle"
     :recommendation-strength="recommendationStrength"
     @close="gameSettingsVisible = false"
     @update:coordinates-enabled="coordinatesEnabled = $event"
     @update:immersive-enabled="setImmersiveMode"
+    @update:recommendation-enabled="setRecommendationEnabled"
     @update:board-style="setBoardStyle"
     @update:recommendation-strength="recommendationStrength = $event"
   />

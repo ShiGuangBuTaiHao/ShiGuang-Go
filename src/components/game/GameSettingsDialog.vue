@@ -9,6 +9,8 @@ const props = defineProps<{
   open: boolean
   coordinatesEnabled: boolean
   immersiveEnabled: boolean
+  localMode?: boolean
+  recommendationEnabled?: boolean
   boardStyle: BoardStyle
   recommendationStrength: RecommendationStrength
 }>()
@@ -17,6 +19,7 @@ const emit = defineEmits<{
   close: []
   'update:coordinatesEnabled': [value: boolean]
   'update:immersiveEnabled': [value: boolean]
+  'update:recommendationEnabled': [value: boolean]
   'update:boardStyle': [value: BoardStyle]
   'update:recommendationStrength': [value: RecommendationStrength]
 }>()
@@ -151,6 +154,25 @@ onBeforeUnmount(() => restoreFocus?.focus())
               @click="emit('update:immersiveEnabled', !props.immersiveEnabled)"
             >
               <span class="settings-toggle-knob" :class="{ on: props.immersiveEnabled }" />
+            </button>
+          </div>
+
+          <div v-if="props.localMode" class="settings-row">
+            <span class="settings-row-icon"><Sparkles :size="18" aria-hidden="true" /></span>
+            <span class="settings-row-copy">
+              <strong>推荐落点</strong>
+              <small>允许在侧栏获取推荐落点</small>
+            </span>
+            <button
+              class="settings-toggle"
+              type="button"
+              role="switch"
+              :aria-checked="props.recommendationEnabled"
+              :aria-label="props.recommendationEnabled ? '关闭推荐落点' : '开启推荐落点'"
+              :title="props.recommendationEnabled ? '关闭推荐落点' : '开启推荐落点'"
+              @click="emit('update:recommendationEnabled', !props.recommendationEnabled)"
+            >
+              <span class="settings-toggle-knob" :class="{ on: props.recommendationEnabled }" />
             </button>
           </div>
 

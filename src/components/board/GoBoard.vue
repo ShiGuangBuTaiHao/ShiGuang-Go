@@ -10,6 +10,7 @@ import type {
   Stone,
   TerritoryMarker,
 } from "../../types/game";
+import type { BoardMark } from "../../types/research";
 
 const props = defineProps<{
   board: Board;
@@ -26,6 +27,7 @@ const props = defineProps<{
   boardStyle: BoardStyle;
   disabled: boolean;
   busy: boolean;
+  marks?: BoardMark[];
 }>();
 const emit = defineEmits<{ place: [row: number, col: number] }>();
 
@@ -370,6 +372,41 @@ function render() {
     });
   });
 
+  props.marks?.forEach((mark) => {
+    const point = mark.row === undefined || mark.col === undefined
+      ? null
+      : { x: padding + mark.col * cell, y: padding + mark.row * cell };
+    if (!point) return;
+    const markSize = cell * 0.28;
+    context.save();
+    context.strokeStyle = themeAccent;
+    context.fillStyle = themeAccent;
+    context.lineWidth = Math.max(1.5, cell * 0.045);
+    context.lineJoin = "round";
+    if (mark.type === "circle") {
+      context.beginPath();
+      context.arc(point.x, point.y, markSize, 0, Math.PI * 2);
+      context.stroke();
+    } else if (mark.type === "square") {
+      context.strokeRect(point.x - markSize, point.y - markSize, markSize * 2, markSize * 2);
+    } else if (mark.type === "triangle") {
+      context.beginPath();
+      context.moveTo(point.x, point.y - markSize);
+      context.lineTo(point.x + markSize, point.y + markSize * 0.82);
+      context.lineTo(point.x - markSize, point.y + markSize * 0.82);
+      context.closePath();
+      context.stroke();
+    } else if (mark.type === "cross") {
+      context.beginPath();
+      context.moveTo(point.x - markSize, point.y - markSize);
+      context.lineTo(point.x + markSize, point.y + markSize);
+      context.moveTo(point.x + markSize, point.y - markSize);
+      context.lineTo(point.x - markSize, point.y + markSize);
+      context.stroke();
+    }
+    context.restore();
+  });
+
   // Current shape uses solid squares. AI prediction restores the older visual
   // language: solid squares for strong ownership and dashed hollow squares
   // for uncertain ownership. Recommendation markers have higher visual
@@ -543,6 +580,7 @@ watch(
     props.moveNumbers,
     props.showMoveNumbers,
     props.boardStyle,
+    props.marks,
   ],
   render,
   { deep: true }

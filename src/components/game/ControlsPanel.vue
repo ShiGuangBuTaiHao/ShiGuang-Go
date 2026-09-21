@@ -13,6 +13,8 @@ const props = defineProps<{
   recommendationLoading?: boolean
   territoryLoading?: boolean
   analysisBusy?: boolean
+  recommendationEnabled?: boolean
+  analysisDefaultVisible?: boolean
   analysis?: KataGoAnalysis | null
   history?: WinratePoint[]
   perspective?: 'black' | 'white'
@@ -28,7 +30,7 @@ const emit = defineEmits<{
 }>()
 
 const moveNumbersRef = toRef(props, 'moveNumbersEnabled')
-const analysisVisible = ref(true)
+const analysisVisible = ref(props.analysisDefaultVisible ?? false)
 
 </script>
 
@@ -68,7 +70,7 @@ const analysisVisible = ref(true)
             <span class="toggle-knob" :class="{ on: analysisVisible }" />
           </button>
         </div>
-        <div class="control-row">
+        <div v-if="props.recommendationEnabled !== false" class="control-row">
           <div class="control-copy">
             <strong>推荐落点</strong>
             <span>分析当前局面的候选点</span>

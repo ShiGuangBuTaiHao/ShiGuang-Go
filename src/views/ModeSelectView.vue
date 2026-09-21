@@ -31,6 +31,7 @@ import {
 const router = useRouter()
 const game = useGameStore()
 const aiSetupVisible = ref(false)
+const setupMode = ref<'ai' | 'human'>('ai')
 const setup = reactive<GameSetup>(loadGameSetup('rank_10k'))
 const slogans = ['明日复明日，明日何其多', '时光会把你雕刻成你应有的样子', '你就当那是一段如有神助的时光吧']
 const typedSlogan = ref('')
@@ -143,15 +144,24 @@ function saveRecentGame(strength: string) {
   try { window.localStorage.setItem('go.recent-game', JSON.stringify(value)) } catch { /* storage is optional */ }
 }
 
-function openAiGameSetup() {
+function openGameSetup(mode: 'ai' | 'human') {
+  setupMode.value = mode
   aiSetupVisible.value = true
   window.addEventListener('keydown', handleSetupKeydown)
+}
+
+function openAiGameSetup() {
+  openGameSetup('ai')
+}
+
+function openHumanGameSetup() {
+  openGameSetup('human')
 }
 
 function startRecentGame() {
   const lastSetup = loadGameSetup(setup.aiStrength)
   Object.assign(setup, lastSetup)
-  startAiGame()
+  startConfiguredGame('ai')
 }
 
 function closeAiGameSetup() {
@@ -195,17 +205,25 @@ function selectCustomPeriods(value: string) {
   setup.timeControl.byoYomiPeriods = Number(value)
 }
 
-function startAiGame() {
+function startConfiguredGame(mode: 'ai' | 'human') {
   const normalized = normalizeGameSetup(
     { ...setup, resolvedPlayerColor: resolvePlayerColor(setup.playerColor) },
     setup.aiStrength,
   )
   Object.assign(setup, normalized)
   saveGameSetup(normalized)
-  saveRecentGame(AI_STRENGTHS[normalized.aiStrength].label)
+  if (mode === 'ai') saveRecentGame(AI_STRENGTHS[normalized.aiStrength].label)
   game.reset(normalized.handicap)
   closeAiGameSetup()
-  router.push({ name: 'play-ai' })
+  router.push({ name: mode === 'ai' ? 'play-ai' : 'play-human' })
+}
+
+function startAiGame() {
+  startConfiguredGame('ai')
+}
+
+function startHumanGame() {
+  startConfiguredGame('human')
 }
 
 function handleSetupKeydown(event: KeyboardEvent) {
@@ -225,8 +243,8 @@ function handleSetupKeydown(event: KeyboardEvent) {
           <button class="feature-card feature-card-secondary feature-card-lan" type="button" @click="router.push({ name: 'lan-lobby' })">
             <span class="feature-title">局域网对局</span>
           </button>
-          <button class="feature-card feature-card-secondary feature-card-human" type="button" @click="router.push({ name: 'play-human' })">
-            <span class="feature-title">双人对局</span>
+          <button class="feature-card feature-card-secondary feature-card-human" type="button" aria-label="本地对局" @click="openHumanGameSetup">
+            <span class="feature-title">本地对局</span>
           </button>
           <div class="feature-row">
             <button class="feature-card feature-card-secondary feature-card-active feature-card-research" type="button" @click="router.push({ name: 'research' })">
@@ -249,7 +267,7 @@ function handleSetupKeydown(event: KeyboardEvent) {
         <section class="setup-dialog" role="dialog" aria-modal="true" aria-labelledby="setup-title">
         <header class="setup-heading">
           <div>
-            <h1 id="setup-title">人机对局</h1>
+            <h1 id="setup-title">{{ setupMode === 'ai' ? '人机对局' : '本地对局' }}</h1>
           </div>
           <button class="setup-close" type="button" aria-label="关闭" title="关闭" @click="closeAiGameSetup"><X :size="18" stroke-width="2" aria-hidden="true" /></button>
         </header>
@@ -264,10 +282,10 @@ function handleSetupKeydown(event: KeyboardEvent) {
             <span>{{ timePresetLabel }}</span>
           </div>
 
-          <div class="setup-layout">
+          <div class="setup-layout" :class="{ 'setup-layout-local': setupMode === 'human' }">
             <div class="setup-main">
               <section class="setup-section">
-                <div class="section-heading"><h2>执棋方式</h2><span>决定玩家与 KataGo 的颜色</span></div>
+                <div class="section-heading"><h2>执棋方式</h2><span>{{ setupMode === 'ai' ? '决定玩家与 KataGo 的颜色' : '决定双方的执棋颜色' }}</span></div>
                 <div class="select-field">
                   <span>对局方式</span>
                   <SetupDropdown :model-value="setup.playerColor" :options="playerColorOptions" ariaLabel="选择执棋方式" @update:model-value="setup.playerColor = $event as GameSetup['playerColor']" />
@@ -305,7 +323,7 @@ function handleSetupKeydown(event: KeyboardEvent) {
               </section>
             </div>
 
-            <aside class="rank-panel">
+            <aside v-if="setupMode === 'ai'" class="rank-panel">
               <div class="section-heading"><h2>AI 段位</h2><span>Human SL 人类棋力</span></div>
               <div class="rank-selected"><span>本局选择</span><strong>{{ AI_STRENGTHS[setup.aiStrength].label }}</strong></div>
               <div class="select-field rank-select-field">
@@ -319,7 +337,7 @@ function handleSetupKeydown(event: KeyboardEvent) {
 
         <footer class="setup-actions">
           <button class="setup-secondary" type="button" @click="closeAiGameSetup">取消</button>
-          <button class="setup-primary" type="button" @click="startAiGame">开始对局</button>
+          <button class="setup-primary" type="button" @click="setupMode === 'ai' ? startAiGame() : startHumanGame()">开始对局</button>
         </footer>
       </section>
       </div>
@@ -535,7 +553,7 @@ function handleSetupKeydown(event: KeyboardEvent) {
 .setup-close { display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border: 1px solid transparent; border-radius: 6px; color: #323130; background: transparent; transition: border-color 150ms ease-out, color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out, transform 150ms ease-out; }.setup-close:hover { color: #0078d4; border-color: rgba(255,255,255,.6); background: rgba(255,255,255,.72); box-shadow: 0 1.6px 3.6px rgba(0,0,0,.13), 0 .3px .9px rgba(0,0,0,.1); }.setup-close:active { transform: scale(.97); box-shadow: none; }.setup-close:focus-visible { outline: 2px solid #0078d4; outline-offset: 2px; box-shadow: 0 0 0 4px rgba(255,255,255,.4), 0 0 0 6px #0078d4; }
 .setup-scroll { min-height: 0; flex: 1 1 auto; overflow-y: auto; padding: 18px 24px 24px; }
 .setup-summary { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 20px; padding: 11px 14px; border: 1px solid rgba(225,225,225,.9); border-radius: 8px; color: var(--muted); background: rgba(255,255,255,.4); font-size: 12px; }.setup-summary b { color: var(--text); }
-.setup-layout { display: grid; grid-template-columns: minmax(0, 1fr) 270px; gap: 28px; flex: 1 1 auto; }.setup-main { min-width: 0; }.setup-section { padding: 0 0 16px; margin-bottom: 16px; border-bottom: 1px solid rgba(225,225,225,.72); }.section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin-bottom: 9px; }.section-heading h2 { margin: 0; color: var(--text); font-size: 15px; }.section-heading span { color: var(--muted); font-size: 11px; }
+.setup-layout { display: grid; grid-template-columns: minmax(0, 1fr) 270px; gap: 28px; flex: 1 1 auto; }.setup-layout-local { grid-template-columns: minmax(0, 1fr); }.setup-main { min-width: 0; }.setup-section { padding: 0 0 16px; margin-bottom: 16px; border-bottom: 1px solid rgba(225,225,225,.72); }.section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin-bottom: 9px; }.section-heading h2 { margin: 0; color: var(--text); font-size: 15px; }.section-heading span { color: var(--muted); font-size: 11px; }
 .select-field { display: grid; grid-template-columns: 82px minmax(0, 1fr); align-items: center; gap: 12px; color: var(--muted); font-size: 12px; }.select-field > span { color: var(--text); font-weight: 600; }.rank-select-field { grid-template-columns: 1fr; gap: 7px; }.rank-select-field > span { color: var(--muted); font-size: 11px; }.rank-description { margin: 10px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .choice-grid { display: grid; gap: 8px; }.three-columns { grid-template-columns: repeat(3, minmax(0, 1fr)); }.choice-button, .time-button, .handicap-button, .rank-button { display: grid; min-height: 62px; align-content: center; gap: 4px; padding: 10px 12px; border: 1px solid transparent; border-radius: 6px; color: #323130; background: rgba(255,255,255,.4); box-shadow: 0 1.6px 3.6px rgba(0,0,0,.13), 0 .3px .9px rgba(0,0,0,.1); font: inherit; text-align: left; cursor: pointer; transition: border-color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out, transform 150ms ease-out; }.choice-button:hover, .time-button:hover, .handicap-button:hover, .rank-button:hover { border-color: rgba(255,255,255,.6); color: #0078d4; background: rgba(255,255,255,.72); box-shadow: 0 1.6px 3.6px rgba(0,0,0,.13), 0 .3px .9px rgba(0,0,0,.1); }.choice-button.selected, .time-button.selected, .handicap-button.selected, .rank-button.selected { border-color: rgba(255,255,255,.6); color: #0078d4; background: rgba(255,255,255,.72); box-shadow: 0 1.6px 3.6px rgba(0,0,0,.13), 0 .3px .9px rgba(0,0,0,.1); }.choice-button strong, .time-button strong { font-size: 13px; }.choice-button small, .time-button small { color: #605e5c; font-size: 11px; }.choice-button:active, .time-button:active, .handicap-button:active, .rank-button:active { transform: scale(.97); box-shadow: none; }.choice-button:focus-visible, .time-button:focus-visible, .handicap-button:focus-visible, .rank-button:focus-visible { outline: 2px solid #0078d4; outline-offset: 2px; box-shadow: 0 0 0 4px rgba(255,255,255,.4), 0 0 0 6px #0078d4; }
 .handicap-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }.handicap-button { min-height: 40px; padding: 0 8px; font-size: 12px; }.komi-result { display: flex; align-items: baseline; gap: 10px; margin-top: 12px; color: #605e5c; font-size: 12px; }.komi-result strong { color: #0078d4; font-size: 16px; }.komi-result small { font-size: 11px; }

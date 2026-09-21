@@ -50,7 +50,7 @@ export function applyGameCommand(
     return { event: null, error: `${command.type === 'undo' ? '悔棋' : '重做'}由会话时间线处理` }
   }
 
-  if (snapshot.status === 'finished') {
+  if (snapshot.status === 'finished' && !(command.type === 'score' && snapshot.result?.reason === 'two-passes')) {
     return { event: null, error: '棋局已经结束' }
   }
 
