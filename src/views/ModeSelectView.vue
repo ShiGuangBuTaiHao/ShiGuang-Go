@@ -244,8 +244,9 @@ function handleSetupKeydown(event: KeyboardEvent) {
       </div>
     </section>
 
-    <div v-if="aiSetupVisible" class="setup-backdrop" @click.self="closeAiGameSetup">
-      <section class="setup-dialog" role="dialog" aria-modal="true" aria-labelledby="setup-title">
+    <Teleport to="body">
+      <div v-if="aiSetupVisible" class="setup-backdrop" @click.self="closeAiGameSetup">
+        <section class="setup-dialog" role="dialog" aria-modal="true" aria-labelledby="setup-title">
         <header class="setup-heading">
           <div>
             <h1 id="setup-title">人机对局</h1>
@@ -253,65 +254,67 @@ function handleSetupKeydown(event: KeyboardEvent) {
           <button class="setup-close" type="button" aria-label="关闭" title="关闭" @click="closeAiGameSetup"><X :size="18" stroke-width="2" aria-hidden="true" /></button>
         </header>
 
-        <div class="setup-summary" aria-live="polite">
-          <span><b>19 路棋盘</b></span>
-          <span>{{ selectedRule.label }}</span>
-          <span>{{ playerColorLabel }}</span>
-          <span>{{ selectedHandicapLabel }}</span>
-          <span>黑贴 {{ currentKomiLabel }}</span>
-          <span>{{ timePresetLabel }}</span>
-        </div>
-
-        <div class="setup-layout">
-          <div class="setup-main">
-            <section class="setup-section">
-              <div class="section-heading"><h2>执棋方式</h2><span>决定玩家与 KataGo 的颜色</span></div>
-              <div class="select-field">
-                <span>对局方式</span>
-                <SetupDropdown :model-value="setup.playerColor" :options="playerColorOptions" ariaLabel="选择执棋方式" @update:model-value="setup.playerColor = $event as GameSetup['playerColor']" />
-              </div>
-            </section>
-
-            <section class="setup-section">
-              <div class="section-heading"><h2>规则预设</h2><span>贴目和计分方式会随预设变化</span></div>
-              <div class="select-field">
-                <span>规则</span>
-                <SetupDropdown :model-value="setup.ruleSet" :options="ruleOptions" ariaLabel="选择规则" @update:model-value="setup.ruleSet = $event as GameSetup['ruleSet']" />
-              </div>
-            </section>
-
-            <section class="setup-section">
-              <div class="section-heading"><h2>让子方式</h2><span>让子由黑方让给白方，白方连续落子</span></div>
-              <div class="select-field">
-                <span>让子</span>
-                <SetupDropdown :model-value="String(setup.handicap)" :options="handicapOptions" ariaLabel="选择让子方式" @update:model-value="selectHandicap" />
-              </div>
-              <div class="komi-result"><span>本局黑贴</span><strong>{{ currentKomiLabel }}</strong><small>{{ setup.handicap === 0 ? '分先的规则贴目' : '让子后的规则贴目' }}</small></div>
-            </section>
-
-            <section class="setup-section">
-              <div class="section-heading"><h2>用时</h2><span>只限制玩家，AI 思考不计入玩家用时</span></div>
-              <div class="select-field">
-                <span>计时方案</span>
-                <SetupDropdown :model-value="setup.timeControl.preset" :options="timeOptions" ariaLabel="选择用时方案" @update:model-value="selectTimePresetValue" />
-              </div>
-              <div v-if="setup.timeControl.preset === 'custom'" class="custom-time-grid">
-                <div class="custom-time-field"><span>主时间</span><SetupDropdown :model-value="String(setup.timeControl.mainTimeSeconds)" :options="customMainTimeOptions" ariaLabel="选择主时间" @update:model-value="selectCustomMainTime" /></div>
-                <div class="custom-time-field"><span>读秒时间</span><SetupDropdown :model-value="String(setup.timeControl.byoYomiSeconds)" :options="customByoYomiOptions" ariaLabel="选择读秒时间" @update:model-value="selectCustomByoYomi" /></div>
-                <div class="custom-time-field"><span>读秒次数</span><SetupDropdown :model-value="String(setup.timeControl.byoYomiPeriods)" :options="customPeriodOptions" ariaLabel="选择读秒次数" @update:model-value="selectCustomPeriods" /></div>
-              </div>
-            </section>
+        <div class="setup-scroll">
+          <div class="setup-summary" aria-live="polite">
+            <span><b>19 路棋盘</b></span>
+            <span>{{ selectedRule.label }}</span>
+            <span>{{ playerColorLabel }}</span>
+            <span>{{ selectedHandicapLabel }}</span>
+            <span>黑贴 {{ currentKomiLabel }}</span>
+            <span>{{ timePresetLabel }}</span>
           </div>
 
-          <aside class="rank-panel">
-            <div class="section-heading"><h2>AI 段位</h2><span>Human SL 人类棋力</span></div>
-            <div class="rank-selected"><span>本局选择</span><strong>{{ AI_STRENGTHS[setup.aiStrength].label }}</strong></div>
-            <div class="select-field rank-select-field">
-              <span>选择段位</span>
-              <SetupDropdown :model-value="setup.aiStrength" :options="rankOptions" ariaLabel="选择 AI 段位" @update:model-value="selectAiStrength" />
+          <div class="setup-layout">
+            <div class="setup-main">
+              <section class="setup-section">
+                <div class="section-heading"><h2>执棋方式</h2><span>决定玩家与 KataGo 的颜色</span></div>
+                <div class="select-field">
+                  <span>对局方式</span>
+                  <SetupDropdown :model-value="setup.playerColor" :options="playerColorOptions" ariaLabel="选择执棋方式" @update:model-value="setup.playerColor = $event as GameSetup['playerColor']" />
+                </div>
+              </section>
+
+              <section class="setup-section">
+                <div class="section-heading"><h2>规则预设</h2><span>贴目和计分方式会随预设变化</span></div>
+                <div class="select-field">
+                  <span>规则</span>
+                  <SetupDropdown :model-value="setup.ruleSet" :options="ruleOptions" ariaLabel="选择规则" @update:model-value="setup.ruleSet = $event as GameSetup['ruleSet']" />
+                </div>
+              </section>
+
+              <section class="setup-section">
+                <div class="section-heading"><h2>让子方式</h2><span>让子由黑方让给白方，白方连续落子</span></div>
+                <div class="select-field">
+                  <span>让子</span>
+                  <SetupDropdown :model-value="String(setup.handicap)" :options="handicapOptions" ariaLabel="选择让子方式" @update:model-value="selectHandicap" />
+                </div>
+                <div class="komi-result"><span>本局黑贴</span><strong>{{ currentKomiLabel }}</strong><small>{{ setup.handicap === 0 ? '分先的规则贴目' : '让子后的规则贴目' }}</small></div>
+              </section>
+
+              <section class="setup-section">
+                <div class="section-heading"><h2>用时</h2><span>只限制玩家，AI 思考不计入玩家用时</span></div>
+                <div class="select-field">
+                  <span>计时方案</span>
+                  <SetupDropdown :model-value="setup.timeControl.preset" :options="timeOptions" ariaLabel="选择用时方案" @update:model-value="selectTimePresetValue" />
+                </div>
+                <div v-if="setup.timeControl.preset === 'custom'" class="custom-time-grid">
+                  <div class="custom-time-field"><span>主时间</span><SetupDropdown :model-value="String(setup.timeControl.mainTimeSeconds)" :options="customMainTimeOptions" ariaLabel="选择主时间" @update:model-value="selectCustomMainTime" /></div>
+                  <div class="custom-time-field"><span>读秒时间</span><SetupDropdown :model-value="String(setup.timeControl.byoYomiSeconds)" :options="customByoYomiOptions" ariaLabel="选择读秒时间" @update:model-value="selectCustomByoYomi" /></div>
+                  <div class="custom-time-field"><span>读秒次数</span><SetupDropdown :model-value="String(setup.timeControl.byoYomiPeriods)" :options="customPeriodOptions" ariaLabel="选择读秒次数" @update:model-value="selectCustomPeriods" /></div>
+                </div>
+              </section>
             </div>
-            <p class="rank-description">{{ AI_STRENGTHS[setup.aiStrength].description }}</p>
-          </aside>
+
+            <aside class="rank-panel">
+              <div class="section-heading"><h2>AI 段位</h2><span>Human SL 人类棋力</span></div>
+              <div class="rank-selected"><span>本局选择</span><strong>{{ AI_STRENGTHS[setup.aiStrength].label }}</strong></div>
+              <div class="select-field rank-select-field">
+                <span>选择段位</span>
+                <SetupDropdown :model-value="setup.aiStrength" :options="rankOptions" ariaLabel="选择 AI 段位" @update:model-value="selectAiStrength" />
+              </div>
+              <p class="rank-description">{{ AI_STRENGTHS[setup.aiStrength].description }}</p>
+            </aside>
+          </div>
         </div>
 
         <footer class="setup-actions">
@@ -319,7 +322,8 @@ function handleSetupKeydown(event: KeyboardEvent) {
           <button class="setup-primary" type="button" @click="startAiGame">开始对局</button>
         </footer>
       </section>
-    </div>
+      </div>
+    </Teleport>
   </main>
 </template>
 
@@ -525,10 +529,11 @@ function handleSetupKeydown(event: KeyboardEvent) {
 .feature-card-primary { padding: 32px; }
 .feature-card-primary .feature-title { font-size: 28px; }
 
-.setup-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 22px; background: rgba(50,49,48,.34); }
-.setup-dialog { display: flex; width: min(960px, 100%); max-height: min(820px, calc(100vh - 32px)); flex-direction: column; overflow: auto; padding: 24px; border: 1px solid rgba(225,225,225,.9); border-radius: 8px; background: rgba(255,255,255,.4); box-shadow: 0 6.4px 14.4px rgba(0,0,0,.13), 0 1.2px 3.6px rgba(0,0,0,.1); backdrop-filter: blur(20px); }
-.setup-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 18px; }.setup-heading h1 { margin: 0; color: var(--text); font-size: 24px; }
+.setup-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 22px; background: rgba(50,49,48,.34); }
+.setup-dialog { display: flex; width: min(960px, calc(100vw - 44px)); height: min(820px, calc(100dvh - 44px)); min-height: 0; flex-direction: column; overflow: hidden; border: 1px solid rgba(225,225,225,.9); border-radius: 8px; background: rgba(255,255,255,.4); box-shadow: 0 6.4px 14.4px rgba(0,0,0,.13), 0 1.2px 3.6px rgba(0,0,0,.1); backdrop-filter: blur(20px); }
+.setup-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 20px; margin: 0; padding: 24px 24px 0; }.setup-heading h1 { margin: 0; color: var(--text); font-size: 24px; }
 .setup-close { display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border: 1px solid transparent; border-radius: 6px; color: #323130; background: transparent; transition: border-color 150ms ease-out, color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out, transform 150ms ease-out; }.setup-close:hover { color: #0078d4; border-color: rgba(255,255,255,.6); background: rgba(255,255,255,.72); box-shadow: 0 1.6px 3.6px rgba(0,0,0,.13), 0 .3px .9px rgba(0,0,0,.1); }.setup-close:active { transform: scale(.97); box-shadow: none; }.setup-close:focus-visible { outline: 2px solid #0078d4; outline-offset: 2px; box-shadow: 0 0 0 4px rgba(255,255,255,.4), 0 0 0 6px #0078d4; }
+.setup-scroll { min-height: 0; flex: 1 1 auto; overflow-y: auto; padding: 18px 24px 24px; }
 .setup-summary { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 20px; padding: 11px 14px; border: 1px solid rgba(225,225,225,.9); border-radius: 8px; color: var(--muted); background: rgba(255,255,255,.4); font-size: 12px; }.setup-summary b { color: var(--text); }
 .setup-layout { display: grid; grid-template-columns: minmax(0, 1fr) 270px; gap: 28px; flex: 1 1 auto; }.setup-main { min-width: 0; }.setup-section { padding: 0 0 16px; margin-bottom: 16px; border-bottom: 1px solid rgba(225,225,225,.72); }.section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin-bottom: 9px; }.section-heading h2 { margin: 0; color: var(--text); font-size: 15px; }.section-heading span { color: var(--muted); font-size: 11px; }
 .select-field { display: grid; grid-template-columns: 82px minmax(0, 1fr); align-items: center; gap: 12px; color: var(--muted); font-size: 12px; }.select-field > span { color: var(--text); font-weight: 600; }.rank-select-field { grid-template-columns: 1fr; gap: 7px; }.rank-select-field > span { color: var(--muted); font-size: 11px; }.rank-description { margin: 10px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
@@ -536,7 +541,7 @@ function handleSetupKeydown(event: KeyboardEvent) {
 .handicap-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }.handicap-button { min-height: 40px; padding: 0 8px; font-size: 12px; }.komi-result { display: flex; align-items: baseline; gap: 10px; margin-top: 12px; color: #605e5c; font-size: 12px; }.komi-result strong { color: #0078d4; font-size: 16px; }.komi-result small { font-size: 11px; }
 .time-preset-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }.custom-time-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }.custom-time-field { display: grid; gap: 5px; min-width: 0; }.custom-time-field > span { color: var(--muted); font-size: 11px; }
 .rank-panel { align-self: start; padding-left: 22px; border-left: 1px solid rgba(225,225,225,.72); }.rank-selected { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid rgba(225,225,225,.72); color: var(--muted); font-size: 11px; }.rank-selected strong { color: var(--accent); font-size: 20px; }
-.setup-actions { position: sticky; bottom: -24px; z-index: 2; display: flex; justify-content: flex-end; gap: 8px; margin: 4px -24px -24px; padding: 18px 24px 24px; border-top: 1px solid rgba(225,225,225,.9); background: transparent; backdrop-filter: none; }.setup-secondary, .setup-primary { min-height: 40px; padding: 0 18px; border-radius: 6px; font: inherit; font-size: 13px; font-weight: 600; transition: transform 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out; }.setup-secondary { border: 1px solid transparent; color: #323130; background: transparent; }.setup-primary { border: 1px solid #0078d4; color: #fff; background: #0078d4; box-shadow: 0 1.6px 3.6px rgba(0,0,0,.13), 0 .3px .9px rgba(0,0,0,.1); }.setup-secondary:hover { border-color: rgba(255,255,255,.6); color: #0078d4; background: rgba(255,255,255,.72); box-shadow: 0 1.6px 3.6px rgba(0,0,0,.13), 0 .3px .9px rgba(0,0,0,.1); }.setup-primary:hover { background: #106ebe; box-shadow: 0 3.2px 7.2px rgba(0,0,0,.13), 0 .6px 1.8px rgba(0,0,0,.1); }.setup-secondary:active, .setup-primary:active { transform: scale(.97); box-shadow: none; }.setup-primary:active { background: #005a9e; }.setup-secondary:focus-visible, .setup-primary:focus-visible { outline: 2px solid #0078d4; outline-offset: 2px; box-shadow: 0 0 0 4px rgba(255,255,255,.4), 0 0 0 6px #0078d4; }
+.setup-actions { display: flex; flex: 0 0 auto; justify-content: flex-end; gap: 8px; padding: 18px 24px 24px; border-top: 1px solid rgba(225,225,225,.9); background: rgba(255,255,255,.18); }.setup-secondary, .setup-primary { min-height: 40px; padding: 0 18px; border-radius: 6px; font: inherit; font-size: 13px; font-weight: 600; transition: transform 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out; }.setup-secondary { border: 1px solid transparent; color: #323130; background: transparent; }.setup-primary { border: 1px solid #0078d4; color: #fff; background: #0078d4; box-shadow: 0 1.6px 3.6px rgba(0,0,0,.13), 0 .3px .9px rgba(0,0,0,.1); }.setup-secondary:hover { border-color: rgba(255,255,255,.6); color: #0078d4; background: rgba(255,255,255,.72); box-shadow: 0 1.6px 3.6px rgba(0,0,0,.13), 0 .3px  .9px rgba(0,0,0,.1); }.setup-primary:hover { background: #106ebe; box-shadow: 0 3.2px 7.2px rgba(0,0,0,.13), 0 .6px 1.8px rgba(0,0,0,.1); }.setup-secondary:active, .setup-primary:active { transform: scale(.97); box-shadow: none; }.setup-primary:active { background: #005a9e; }.setup-secondary:focus-visible, .setup-primary:focus-visible { outline: 2px solid #0078d4; outline-offset: 2px; box-shadow: 0 0 0 4px rgba(255,255,255,.4), 0 0 0 6px #0078d4; }
 
 @media (max-width: 1024px) {
   .home-main { width: calc(100% - 48px); }
@@ -562,12 +567,19 @@ function handleSetupKeydown(event: KeyboardEvent) {
 }
 @media (max-width: 680px) {
   .setup-backdrop { padding: 12px; }
-  .setup-dialog { max-height: calc(100vh - 24px); padding: 18px; }
-  .setup-actions { bottom: -18px; margin-right: -18px; margin-left: -18px; margin-bottom: -18px; padding: 18px; }
+  .setup-dialog { width: 100%; height: calc(100dvh - 24px); }
+  .setup-heading { padding: 18px 18px 0; }
+  .setup-scroll { padding: 18px 18px 20px; }
+  .setup-actions { padding: 18px; }
   .setup-heading h1 { font-size: 20px; }
   .select-field { grid-template-columns: 70px minmax(0, 1fr); gap: 8px; }
   .rank-select-field { grid-template-columns: 1fr; }
   .custom-time-grid { grid-template-columns: 1fr; }
+}
+@media (max-height: 620px) {
+  .setup-heading { padding-top: 14px; }
+  .setup-scroll { padding-top: 12px; padding-bottom: 14px; }
+  .setup-actions { padding-top: 12px; padding-bottom: 14px; }
 }
 @media (max-width: 440px) {
   .home-workspace { gap: 12px; grid-template-rows: 280px 396px; }
