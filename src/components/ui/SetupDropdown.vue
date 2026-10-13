@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Check, ChevronDown } from 'lucide-vue-next'
 
 export interface SetupDropdownOption {
@@ -13,6 +13,7 @@ const props = defineProps<{
   modelValue: string
   options: SetupDropdownOption[]
   ariaLabel: string
+  disabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -103,6 +104,7 @@ function handleDocumentScroll(event: Event) {
 }
 
 async function toggle() {
+  if (props.disabled) return
   open.value = !open.value
   if (open.value) {
     menuStyle.value = { visibility: 'hidden' }
@@ -119,6 +121,7 @@ async function toggle() {
 }
 
 function choose(option: SetupDropdownOption) {
+  if (props.disabled) return
   emit('update:modelValue', option.value)
   open.value = false
   if (positionFrame) {
@@ -127,6 +130,16 @@ function choose(option: SetupDropdownOption) {
   }
   removePositionListeners()
 }
+
+watch(() => props.disabled, (disabled) => {
+  if (!disabled) return
+  open.value = false
+  if (positionFrame) {
+    cancelAnimationFrame(positionFrame)
+    positionFrame = 0
+  }
+  removePositionListeners()
+})
 
 function handleDocumentPointerdown(event: PointerEvent) {
   const target = event.target as Node
@@ -170,6 +183,7 @@ onBeforeUnmount(() => {
       type="button"
       :aria-label="props.ariaLabel"
       :aria-expanded="open"
+      :disabled="props.disabled"
       @click.stop="toggle"
     >
       <span class="setup-dropdown-copy">
@@ -208,7 +222,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .setup-dropdown { position: relative; min-width: 0; }
 .setup-dropdown-trigger { display: flex; width: 100%; min-height: 50px; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 14px; border: 1px solid transparent; border-radius: 6px; color: #323130; background: rgba(255,255,255,.4); box-shadow: 0 1.6px 3.6px rgba(0,0,0,.13), 0 .3px .9px rgba(0,0,0,.1); font: inherit; text-align: left; cursor: pointer; transition: border-color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out, transform 150ms ease-out; }
-.setup-dropdown-trigger:hover, .setup-dropdown.open .setup-dropdown-trigger { border-color: rgba(255,255,255,.6); color: #0078d4; background: rgba(255,255,255,.72); box-shadow: 0 1.6px 3.6px rgba(0,0,0,.13), 0 .3px .9px rgba(0,0,0,.1); }
+.setup-dropdown-trigger:hover:not(:disabled), .setup-dropdown.open .setup-dropdown-trigger:not(:disabled) { border-color: rgba(255,255,255,.6); color: #0078d4; background: rgba(255,255,255,.72); box-shadow: 0 1.6px 3.6px rgba(0,0,0,.13), 0 .3px .9px rgba(0,0,0,.1); }
+.setup-dropdown-trigger:disabled { cursor: not-allowed; opacity: .55; }
 .setup-dropdown-copy { display: grid; min-width: 0; gap: 2px; }
 .setup-dropdown-copy strong { overflow: hidden; color: #323130; font-size: 13px; font-weight: 600; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .setup-dropdown-copy small { overflow: hidden; color: #605e5c; font-size: 11px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }

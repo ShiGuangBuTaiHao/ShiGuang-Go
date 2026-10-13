@@ -2,14 +2,16 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, ArrowUpToLine, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, FilePlus2, FolderOpen, GitBranch, Hash, Library, MessageSquare, Pause, Redo2, Save, Target, Trash2, Undo2, X, Grid2X2 } from 'lucide-vue-next'
+import { ArrowLeft, ArrowUpToLine, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, FilePlus2, FolderOpen, GitBranch, Library, MessageSquare, Pause, Redo2, Save, Trash2, Undo2, X } from 'lucide-vue-next'
 import GoBoard from '../components/board/GoBoard.vue'
+import SidebarShell, { type SidebarTab } from '../components/game/SidebarShell.vue'
 import ResearchModeToolbar from '../components/research/ResearchModeToolbar.vue'
 import VariationTree from '../components/research/VariationTree.vue'
 import ResearchEvaluation from '../components/research/ResearchEvaluation.vue'
 import { useResearchAnalysis } from '../composables/useResearchAnalysis'
 import { useResearchStore } from '../stores/research'
 import { loadBoardStyle } from '../domain/boardTheme'
+import { formatKomi } from '../domain/gameSetup'
 import { positionFromCoordinate } from '../domain/go'
 import { researchPath } from '../domain/researchTree'
 import { importResearchSgf } from '../domain/researchSgf'
@@ -23,13 +25,17 @@ const research = useResearchStore()
 const { tree, current, mode, setupStone, markType, message, line, lineIndex, graph, canGoBack, canGoForward, canUndo, canRedo, onMainLine } = storeToRefs(research)
 const ai = useResearchAnalysis(research)
 const { analysis, candidates, history, status, error, live, preview, previewTree, displayNode, candidatesVisible, territoryVisible } = ai
-const analysisMode = ai.mode
 const route = useRoute()
 const router = useRouter()
 const boardStyle = ref(loadBoardStyle())
 const perspective = ref<'black' | 'white'>('black')
 const moveNumbersVisible = ref(true)
 const libraryVisible = ref(false)
+const inspectorTab = ref('analysis')
+const inspectorTabs: SidebarTab[] = [
+  { id: 'analysis', label: '分析' },
+  { id: 'tree', label: '变化树' },
+]
 const libraryRecords = ref<LibraryRecord[]>([])
 const libraryQuery = ref('')
 const libraryLoading = ref(false)
@@ -188,12 +194,6 @@ function handleKey(event: KeyboardEvent) {
   if (event.key === 'End') { event.preventDefault(); research.goLast() }
 }
 function refreshTheme() { boardStyle.value = loadBoardStyle() }
-watch([() => tree.value.title, () => tree.value.dirty, () => current.value.id], () => {
-  window.dispatchEvent(new CustomEvent('game-header-summary', { detail: {
-    primary: '研究盘', secondary: `${tree.value.title} · 第 ${current.value.snapshot.moveNumber} 手`,
-    status: tree.value.dirty ? '未保存' : '研究中', statusTone: tree.value.dirty ? 'idle' : 'ready',
-  } }))
-}, { immediate: true })
 watch(libraryVisible, (visible) => { if (visible) void refreshLibrary() })
 watch(() => preview.value?.move, async (move) => {
   if (!move || window.innerWidth > 980) return
@@ -216,8 +216,8 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKey); window
     <header class="workspace-toolbar document-toolbar">
       <button v-if="currentRecordId" class="workspace-icon" type="button" title="返回棋谱库" aria-label="返回棋谱库" :disabled="saving" @click="router.push({ name: 'library' })"><ArrowLeft :size="17" /></button>
       <button class="workspace-icon" type="button" title="棋谱库" aria-label="棋谱库" :aria-expanded="libraryVisible" :class="{ selected: libraryVisible }" @click="libraryVisible = !libraryVisible"><Library :size="17" /></button>
-      <div class="document-name"><input aria-label="棋谱名称" :value="tree.title" maxlength="120" @change="research.setTitle(($event.target as HTMLInputElement).value)" /><span>{{ tree.dirty ? '未保存' : currentRecordId ? '已保存' : '本地草稿' }}</span></div>
-      <span class="document-rules">{{ tree.boardSize }} 路 · {{ ruleLabel }} · 贴 {{ tree.komi }}{{ tree.ruleSet === 'chinese' ? '子' : '目' }}</span>
+      <div class="document-name"><input aria-label="棋谱名称" :value="tree.title" maxlength="120" @change="research.setTitle(($event.target as HTMLInputElement).value)" /><span class="document-save-state" :class="{ 'is-dirty': tree.dirty }" role="status">{{ saving ? '保存中' : tree.dirty ? '未保存' : currentRecordId ? '已保存' : '本地草稿' }}</span></div>
+      <div class="document-rules" role="group" aria-label="棋盘规则"><span>{{ tree.boardSize }} 路</span><span>{{ ruleLabel }}</span><span>贴 {{ formatKomi(tree.komi) }} {{ tree.ruleSet === 'chinese' ? '子' : '目' }}</span></div>
       <div class="document-actions">
         <button class="workspace-icon" type="button" title="新建研究" aria-label="新建研究" :disabled="saving" @click="newDocument"><FilePlus2 :size="16" /></button>
         <button class="workspace-icon" type="button" title="打开 SGF" aria-label="打开 SGF" :disabled="saving" @click="fileInput?.click()"><FolderOpen :size="16" /></button>
@@ -235,11 +235,6 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKey); window
       </aside>
       <section class="research-board-area" aria-label="研究棋盘">
         <ResearchModeToolbar :mode="mode" :setup-stone="setupStone" :mark-type="markType" :current-player="current.snapshot.currentPlayer" :locked="Boolean(preview)" @update:mode="research.setMode" @update:setup-stone="research.setSetupStone" @update:mark-type="research.setMarkType" @update:current-player="changePlayer" @clear-marks="research.clearMarks">
-          <div class="board-display-tools" role="group" aria-label="棋盘显示">
-            <button class="workspace-icon" type="button" title="显示手数" aria-label="显示手数" :aria-pressed="moveNumbersVisible" :class="{ selected: moveNumbersVisible }" @click="moveNumbersVisible = !moveNumbersVisible"><Hash :size="16" /></button>
-            <button class="workspace-icon" type="button" title="显示候选落点" aria-label="显示候选落点" :disabled="!analysis || Boolean(preview)" :aria-pressed="candidatesVisible" :class="{ selected: candidatesVisible && analysis && !preview }" @click="candidatesVisible = !candidatesVisible"><Target :size="16" /></button>
-            <button class="workspace-icon" type="button" title="显示形势预测" aria-label="显示形势预测" :disabled="!analysis || Boolean(preview)" :aria-pressed="territoryVisible" :class="{ selected: territoryVisible && analysis && !preview }" @click="territoryVisible = !territoryVisible"><Grid2X2 :size="16" /></button>
-          </div>
         </ResearchModeToolbar>
         <div ref="boardStage" class="board-stage research-board-stage" :class="{ 'is-previewing': preview }">
           <div v-if="preview" class="preview-caption" role="status"><GitBranch :size="14" />AI 预览 · {{ preview.move === 'pass' ? '停一手' : preview.move }} · {{ preview.step }} 手</div>
@@ -262,38 +257,71 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', handleKey); window
             </div>
             <button class="pass-button" type="button" :disabled="Boolean(preview) || mode !== 'play'" @click="research.pass"><Pause :size="14" />停一手</button>
           </div>
-          <input class="move-timeline" type="range" :value="lineIndex" min="0" :max="Math.max(1, line.length - 1)" :disabled="line.length === 1 || Boolean(preview)" aria-label="棋谱进度" @input="research.goToIndex(Number(($event.target as HTMLInputElement).value))" />
+          <!-- Update max before value so appended moves are not clamped to the old endpoint. -->
+          <input class="move-timeline" type="range" min="0" :max="Math.max(1, line.length - 1)" :value="lineIndex" :disabled="line.length === 1 || Boolean(preview)" aria-label="棋谱进度" @input="research.goToIndex(Number(($event.target as HTMLInputElement).value))" />
           <div class="board-status"><span>{{ onMainLine ? '主线' : '变化' }} · 第 {{ current.snapshot.moveNumber }} 手{{ current.move ? ` · ${current.move.pass ? '停一手' : current.move.coordinate}` : '' }}</span><span>提子 黑 {{ current.snapshot.capturedByBlack }} / 白 {{ current.snapshot.capturedByWhite }}</span></div>
         </footer>
       </section>
-      <aside class="research-inspector" aria-label="研究信息">
-        <div class="inspector-analysis"><ResearchEvaluation v-model:perspective="perspective" :analysis="analysis" :candidates="candidates" :history="history" :status="status" :error="error" :live="live" :mode="analysisMode" :preview-move="preview?.move" @request="ai.request" @stop="live = false; ai.stop()" @update:live="live = $event" @update:mode="analysisMode = $event" @preview="ai.showPreview" /></div>
-        <section class="inspector-tree" aria-label="棋谱变化">
-          <div class="section-heading"><h2><GitBranch :size="15" />变化树</h2><span>{{ Object.keys(tree.nodes).length }} 节点</span><div class="section-actions"><button class="workspace-icon" type="button" title="设为主线" aria-label="设为主线" :disabled="onMainLine || Boolean(preview)" @click="research.promoteVariation"><ArrowUpToLine :size="15" /></button><button class="workspace-icon" type="button" title="删除当前变化" aria-label="删除当前变化" :disabled="!current.parentId || Boolean(preview)" @click="deleteBranch"><Trash2 :size="15" /></button></div></div>
-          <VariationTree :graph="graph" @select="preview = null; research.selectNode($event)" />
-        </section>
-        <section class="inspector-notes" aria-label="节点备注"><div class="section-heading"><h2><MessageSquare :size="15" />节点备注</h2><span>第 {{ current.snapshot.moveNumber }} 手</span></div><textarea :value="current.comment" rows="3" aria-label="当前节点备注" placeholder="暂无备注" @input="research.setComment(($event.target as HTMLTextAreaElement).value)" /></section>
-      </aside>
+      <SidebarShell v-model="inspectorTab" label="研究信息" title="研究内容" id-prefix="research-sidebar" :tabs="inspectorTabs">
+        <div class="research-inspector-content">
+          <div v-show="inspectorTab === 'analysis'" class="inspector-analysis"><ResearchEvaluation v-model:perspective="perspective" v-model:move-numbers-enabled="moveNumbersVisible" v-model:candidates-visible="candidatesVisible" v-model:territory-visible="territoryVisible" :analysis="analysis" :history="history" :status="status" :error="error" :preview-move="preview?.move" @request="ai.request" @stop="live = false; ai.stop()" /></div>
+          <section v-show="inspectorTab === 'tree'" class="inspector-tree" aria-label="棋谱变化">
+            <div class="section-heading"><h2><GitBranch :size="15" />变化树</h2><span>{{ Object.keys(tree.nodes).length }} 节点</span><div class="section-actions"><button class="workspace-icon" type="button" title="设为主线" aria-label="设为主线" :disabled="onMainLine || Boolean(preview)" @click="research.promoteVariation"><ArrowUpToLine :size="15" /></button><button class="workspace-icon" type="button" title="删除当前变化" aria-label="删除当前变化" :disabled="!current.parentId || Boolean(preview)" @click="deleteBranch"><Trash2 :size="15" /></button></div></div>
+            <VariationTree :graph="graph" @select="preview = null; research.selectNode($event)" />
+            <section class="inspector-notes" aria-label="节点备注"><div class="section-heading"><h2><MessageSquare :size="15" />节点备注</h2><span>第 {{ current.snapshot.moveNumber }} 手</span></div><textarea :value="current.comment" rows="3" aria-label="当前节点备注" placeholder="暂无备注" @input="research.setComment(($event.target as HTMLTextAreaElement).value)" /></section>
+          </section>
+        </div>
+      </SidebarShell>
     </div>
     <div v-if="confirmAction" class="research-dialog-backdrop" @click.self="closeConfirmation"><section ref="confirmDialog" class="research-dialog" role="dialog" aria-modal="true" aria-labelledby="research-confirm-title" aria-describedby="research-confirm-message"><h2 id="research-confirm-title">{{ confirmAction.title }}</h2><p id="research-confirm-message">{{ confirmAction.message }}</p><div><button class="dialog-button" type="button" @click="closeConfirmation">取消</button><button class="workspace-button primary" type="button" @click="acceptConfirmation">{{ confirmAction.label }}</button></div></section></div>
   </main>
 </template>
 
 <style scoped>
+.research-workbench :deep(.sidebar-tabs) { height: 38px; min-height: 38px; margin-block: 8px 9px; }
 .research-workbench { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; color: var(--text); overflow: hidden; background: var(--shell); background-image: linear-gradient(rgba(243,242,241,.22), rgba(243,242,241,.22)), url('/home-background.png'); background-position: center; background-size: cover; }
-.document-name { display: flex; align-items: center; gap: 10px; min-width: 0; }.document-name input { width: 180px; height: 30px; padding: 3px 6px; border-color: transparent; background: transparent; font-size: 13px; font-weight: 600; }.document-name > span { flex-shrink: 0; color: var(--muted); font-size: 10px; }.document-rules { color: var(--muted); font-size: 11px; }.document-actions { display: flex; gap: 3px; align-items: center; margin-left: auto; } .file-input { display: none; }
+.document-name { display: flex; height: 32px; align-items: center; gap: 10px; min-width: 0; }.document-name input { width: 150px; min-width: 72px; height: 32px; padding: 3px 6px; border: 1px solid transparent; border-radius: 4px; color: var(--text); background: transparent; font-size: 14px; font-weight: 600; line-height: 20px; }.document-name input:hover { border-color: var(--border); background: rgba(255,255,255,.45); }.document-name input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }.document-save-state { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; line-height: 20px; white-space: nowrap; }.document-save-state::before { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); content: ''; }.document-save-state.is-dirty::before { background: var(--accent-strong); }.document-rules { display: flex; height: 32px; align-items: center; color: var(--muted); font-size: 12px; line-height: 20px; white-space: nowrap; }.document-rules > span + span { margin-left: 10px; padding-left: 10px; border-left: 1px solid var(--border); }.document-rules > span:first-child { color: var(--text); font-weight: 500; }.document-actions { display: flex; gap: 3px; align-items: center; margin-left: auto; } .file-input { display: none; }
 .document-feedback { display: flex; align-items: center; justify-content: space-between; min-height: 32px; padding: 0 18px; color: var(--accent-strong); background: var(--accent-soft); font-size: 12px; }.document-feedback > span { overflow-wrap: anywhere; }
 .research-layout { display: grid; grid-template-columns: minmax(0,1fr) 360px; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }.research-layout.library-open { grid-template-columns: 210px minmax(0,1fr) 360px; }
 .research-board-area { display: grid; grid-template-rows: auto minmax(0,1fr) auto auto; min-width: 0; min-height: 0; }
-.board-display-tools { display: flex; align-items: center; gap: 2px; margin-left: auto; }.research-board-stage { min-height: 0; padding: 18px 24px; overflow: hidden; container-type: size; background: rgba(243,242,241,.2); backdrop-filter: blur(2px); }.research-board-stage :deep(.board-host) { width: min(100cqw,100cqh) !important; height: min(100cqw,100cqh) !important; min-width: 0; max-width: 100%; max-height: 100%; box-shadow: var(--shadow-md); }
+.research-board-stage { min-height: 0; padding: 18px 24px; overflow: hidden; container-type: size; background: rgba(243,242,241,.2); backdrop-filter: blur(2px); }.research-board-stage :deep(.board-host) { width: min(100cqw,100cqh) !important; height: min(100cqw,100cqh) !important; min-width: 0; max-width: 100%; max-height: 100%; box-shadow: var(--shadow-md); }
 .research-board-stage.is-previewing { padding-top: 38px; }
 .preview-caption { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--accent-16); border-radius: 4px; color: var(--accent-strong); background: var(--surface); font-size: 11px; white-space: nowrap; z-index: 1; }
 .preview-controls { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 18px; border-top: 1px solid var(--border); background: var(--accent-soft); font-size: 11px; }.preview-controls input { flex: 1; min-width: 40px; accent-color: var(--accent); }.preview-controls > span { white-space: nowrap; }
 .research-navigation { padding: 10px 24px 12px; border-top: 1px solid var(--border); background: rgba(243,242,241,.2); backdrop-filter: blur(2px); }.navigation-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }.history-tools, .move-navigation { display: flex; align-items: center; gap: 3px; }.move-position { display: flex; align-items: center; gap: 4px; min-width: 88px; justify-content: center; font-size: 11px; color: var(--muted); }.move-position input { width: 48px; height: 28px; padding: 2px 4px; font-size: 12px; text-align: center; }.pass-button { display: flex; align-items: center; justify-content: center; gap: 5px; min-height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: rgba(255,255,255,.72); font-size: 11px; }.pass-button:disabled { opacity: .4; }.move-timeline { display: block; width: 100%; height: 18px; margin: 6px 0; accent-color: var(--accent); }.board-status { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 10px; }
-.research-inspector { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--border); overflow-y: auto; background: rgba(243,242,241,.2); backdrop-filter: blur(2px); scrollbar-width: thin; }.inspector-analysis { padding: 16px 18px 12px; border-bottom: 1px solid var(--border); }.inspector-tree { display: flex; flex-direction: column; flex: 1; min-height: 190px; padding: 12px 18px; border-bottom: 1px solid var(--border); }.section-heading { display: flex; align-items: center; gap: 8px; min-height: 32px; margin-bottom: 8px; }.section-heading h2 { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; font-weight: 600; }.section-heading h2 svg { color: var(--muted); }.section-heading > span { color: var(--muted); font-size: 10px; margin-left: auto; }.section-actions { display: flex; gap: 2px; }.section-actions .workspace-icon { width: 28px; height: 28px; flex-basis: 28px; }.inspector-tree :deep(.variation-viewport) { flex: 1; max-height: 250px; }.inspector-notes { padding: 10px 18px 16px; }.inspector-notes .section-heading { margin-bottom: 4px; }.inspector-notes textarea { display: block; width: 100%; min-height: 76px; max-height: 220px; resize: vertical; padding: 8px 10px; font: inherit; font-size: 12px; line-height: 1.5; }
-.research-library { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 12px; border-right: 1px solid var(--border); background: rgba(243,242,241,.6); backdrop-filter: blur(2px); }.library-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }.library-heading h2 { margin: 0; font-size: 13px; }.research-library > input { width: 100%; min-height: 32px; padding: 0 8px; font-size: 12px; border: 1px solid var(--border); border-radius: 5px; }.library-records { flex: 1; min-height: 0; overflow: auto; margin-top: 10px; }.library-records button { display: grid; width: 100%; gap: 6px; padding: 12px 8px; border: 0; border-bottom: 1px solid var(--border); color: var(--text); background: transparent; text-align: left; overflow-wrap: anywhere; }.library-records button:hover, .library-records button.selected { background: var(--accent-soft); }.library-records strong { font-size: 12px; font-weight: 600; }.library-records span, .library-records small { color: var(--muted); font-size: 10px; }.library-empty { padding: 24px 8px; text-align: center; font-size: 12px; color: var(--muted); }
+.research-inspector-content { display: flex; min-height: 100%; flex-direction: column; }.inspector-tree { display: flex; min-height: 190px; flex: 1; flex-direction: column; padding: 8px 0 12px; }.section-heading { display: flex; align-items: center; gap: 8px; min-height: 32px; margin-bottom: 8px; }.section-heading h2 { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; font-weight: 600; }.section-heading h2 svg { color: var(--muted); }.section-heading > span { color: var(--muted); font-size: 10px; margin-left: auto; }.section-actions { display: flex; gap: 2px; }.section-actions .workspace-icon { width: 28px; height: 28px; flex-basis: 28px; }.inspector-tree :deep(.variation-viewport) { flex: 1; max-height: 250px; }.inspector-notes { margin-top: 12px; padding: 12px 0 4px; border-top: 1px solid var(--border); }.inspector-notes .section-heading { margin-bottom: 4px; }.inspector-notes textarea { display: block; width: 100%; min-height: 76px; max-height: 220px; resize: vertical; padding: 8px 10px; font: inherit; font-size: 12px; line-height: 1.5; }
+.research-library { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 12px; border-right: 1px solid var(--border); background: transparent; }.library-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }.library-heading h2 { margin: 0; font-size: 13px; }.research-library > input { width: 100%; min-height: 32px; padding: 0 8px; font-size: 12px; border: 1px solid var(--border); border-radius: 5px; }.library-records { flex: 1; min-height: 0; overflow: auto; margin-top: 10px; }.library-records button { display: grid; width: 100%; gap: 6px; padding: 12px 8px; border: 0; border-bottom: 1px solid var(--border); color: var(--text); background: transparent; text-align: left; overflow-wrap: anywhere; }.library-records button:hover, .library-records button.selected { background: var(--accent-soft); }.library-records strong { font-size: 12px; font-weight: 600; }.library-records span, .library-records small { color: var(--muted); font-size: 10px; }.library-empty { padding: 24px 8px; text-align: center; font-size: 12px; color: var(--muted); }
 .research-dialog-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: rgba(50,49,48,.3); }.research-dialog { width: min(380px,100%); padding: 22px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-md); }.research-dialog h2 { margin: 0 0 12px; font-size: 16px; }.research-dialog p { color: var(--muted); font-size: 13px; line-height: 1.6; }.research-dialog > div { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }.dialog-button { min-height: 32px; padding: 0 14px; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--surface); font-size: 12px; }
-@media (min-width: 981px) and (max-width: 1240px) { .research-layout.library-open { grid-template-columns: minmax(0,1fr) 340px; position: relative; }.library-open .research-library { position: absolute; left: 0; top: 0; bottom: 0; width: 220px; z-index: 3; background: var(--shell); box-shadow: var(--shadow-md); }.research-layout { grid-template-columns: minmax(0,1fr) 340px; }.document-rules { display: none; } }
-@media (max-width: 980px) { .research-layout, .research-layout.library-open { display: block; overflow-y: auto; position: relative; }.research-board-area { height: 720px; min-height: 0; }.research-inspector { display: grid; grid-template-columns: 1fr 1fr; overflow: visible; border-left: 0; border-top: 1px solid var(--border); }.inspector-analysis { grid-row: span 2; border-right: 1px solid var(--border); border-bottom: 0; }.inspector-tree { min-height: 220px; }.research-library { position: absolute; top: 0; left: 0; bottom: 0; width: 240px; z-index: 3; background: var(--shell); box-shadow: var(--shadow-md); }.document-rules { display: none; } }
-@media (max-width: 600px) { .document-toolbar { padding: 8px 10px; gap: 4px; }.document-name { flex: 1; gap: 4px; }.document-name input { width: 132px; }.document-name > span { font-size: 9px; }.document-actions { gap: 0; }.document-actions .workspace-icon { width: 28px; flex-basis: 28px; }.document-actions .workspace-button { padding: 0 8px; }.document-actions .workspace-button span { display: none; }.research-board-area { height: auto; grid-template-rows: auto auto auto auto; }.research-board-stage { height: auto; min-height: 0; aspect-ratio: 1; padding: 14px 12px; }.research-inspector { display: flex; }.inspector-analysis { border-right: 0; border-bottom: 1px solid var(--border); }.inspector-tree { min-height: 230px; flex: none; }.research-navigation { padding: 8px 12px 12px; }.navigation-top { flex-wrap: wrap; gap: 6px; }.history-tools { order: 2; }.move-navigation { order: 1; flex: 1 0 100%; justify-content: center; }.pass-button { order: 3; margin-left: auto; }.preview-controls { flex-wrap: wrap; padding: 6px 12px; }.preview-controls > span:first-of-type { display: none; }.board-display-tools { margin-left: auto; }.document-feedback { padding-inline: 12px; }.inspector-notes textarea { font-size: 16px; } }
+@media (min-width: 981px) and (max-width: 1240px) { .research-layout.library-open { grid-template-columns: minmax(0,1fr) 340px; position: relative; }.library-open .research-library { position: absolute; left: 0; top: 0; bottom: 0; width: 220px; z-index: 3; box-shadow: var(--shadow-md); }.research-layout { grid-template-columns: minmax(0,1fr) 340px; }.document-rules { display: none; } }
+@media (max-width: 980px) { .research-layout, .research-layout.library-open { display: block; overflow-y: auto; position: relative; }.research-board-area { height: 720px; min-height: 0; }.inspector-tree { min-height: 220px; }.research-library { position: absolute; top: 0; left: 0; bottom: 0; width: 240px; z-index: 3; box-shadow: var(--shadow-md); }.document-rules { display: none; } }
+@media (max-width: 600px) { .document-toolbar { padding: 8px 10px; gap: 4px; }.document-name { flex: 1; gap: 6px; }.document-name input { width: 132px; }.document-save-state { font-size: 11px; }.document-actions { gap: 0; }.document-actions .workspace-icon { width: 28px; flex-basis: 28px; }.document-actions .workspace-button { padding: 0 8px; }.document-actions .workspace-button span { display: none; }.research-board-area { height: auto; grid-template-rows: auto auto auto auto; }.research-board-stage { height: auto; min-height: 0; aspect-ratio: 1; padding: 14px 12px; }.research-navigation { padding: 8px 12px 12px; }.navigation-top { flex-wrap: wrap; gap: 6px; }.history-tools { order: 2; }.move-navigation { order: 1; flex: 1 0 100%; justify-content: center; }.pass-button { order: 3; margin-left: auto; }.preview-controls { flex-wrap: wrap; padding: 6px 12px; }.preview-controls > span:first-of-type { display: none; }.document-feedback { padding-inline: 12px; }.inspector-notes textarea { font-size: 16px; } }
+.research-library, .research-workbench :deep(.game-sidebar) { background: rgba(243,242,241,.2); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
+.research-library > input[type='search'] {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  background: rgba(255, 255, 255, .72);
+  transition: border-color 140ms ease, outline-color 140ms ease, background-color 140ms ease;
+}
+.research-library > input[type='search']:hover:not(:focus-visible) { border-color: #a19f9d; }
+.research-library > input[type='search']:focus-visible { border: 2px solid var(--accent); outline: none; background: var(--surface); }
+.research-library > input[type='search']::placeholder { color: var(--text-subtle); opacity: 1; }
+.library-records { display: grid; align-content: start; gap: 8px; }
+.library-records button {
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid rgba(225, 225, 225, .9);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .66);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .04);
+  backdrop-filter: blur(4px);
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+.library-records button:not(.selected):hover { border-color: var(--accent-16); background: rgba(255, 255, 255, .86); box-shadow: var(--shadow-xs); }
+.library-records button.selected { border-color: rgba(var(--accent-rgb), .32); background: rgba(222, 236, 249, .92); box-shadow: var(--shadow-xs); }
+.library-records button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.library-records strong { font-size: 13px; }
+.library-records span, .library-records small { font-size: 11px; line-height: 1.4; }
 </style>

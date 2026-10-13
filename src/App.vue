@@ -11,6 +11,17 @@ const route = useRoute()
 const router = useRouter()
 const library = useLibraryStore()
 const isHome = computed(() => route.name === 'mode-select')
+const entryTitle = computed(() => {
+  switch (route.name) {
+    case 'play-ai': return '人机对局'
+    case 'play-human': return '本地对局'
+    case 'play-lan': return '局域网对局'
+    case 'research': return '研究盘'
+    case 'library': return '棋谱库'
+    case 'settings': return '设置'
+    default: return ''
+  }
+})
 const isLibrary = computed(() => route.name === 'library')
 const desktopRuntime = isTauri()
 const browserDevelopment = import.meta.env.DEV && !desktopRuntime
@@ -222,7 +233,7 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
     <header class="app-header" :class="{ playing: isPlaying, 'workspace-header': isWorkspace, 'home-header': isHome }">
       <div class="brand">
         <img class="brand-logo" src="/logo.png?v=2" alt="时光围棋 Logo" />
-        <div class="brand-copy"><strong>时光围棋</strong></div>
+        <div class="brand-copy"><strong class="brand-title"><span>时光围棋</span><span v-if="entryTitle" class="brand-subtitle"> · {{ entryTitle }}</span></strong></div>
       </div>
       <div v-if="isHome" class="home-header-right">
         <div class="home-header-actions">
@@ -238,7 +249,7 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
         </div>
       </div>
       <div v-if="isWorkspace" class="header-actions">
-        <div v-if="isPlaying" class="playing-summary" :title="playingSummary.statusTitle" aria-label="当前对局摘要">
+        <div v-if="isPlaying && route.name !== 'research'" class="playing-summary" :title="playingSummary.statusTitle" aria-label="当前对局摘要">
           <div class="playing-summary-copy">
             <strong>{{ playingSummary.primary }}</strong>
             <span v-if="playingSummary.secondary">{{ playingSummary.secondary }}</span>
@@ -248,7 +259,7 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
             {{ playingSummary.status }}
           </span>
         </div>
-        <div v-else class="playing-summary" aria-label="棋谱库摘要">
+        <div v-else-if="!isPlaying" class="playing-summary" aria-label="棋谱库摘要">
           <div class="playing-summary-copy"><strong>棋谱库</strong><span>{{ library.counts.all }} 局</span></div>
         </div>
         <div class="playing-action-buttons">
@@ -301,12 +312,16 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
 @media (prefers-reduced-motion: reduce) { .startup-progress span { animation: none; } }
 
 .app-shell { display: flex; width: 100%; height: 100vh; min-height: 0; flex-direction: column; overflow: hidden; }
-.app-header { z-index: 5; display: grid; height: 56px; flex: 0 0 56px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; padding: 0 22px; border-bottom: 1px solid var(--border); background: #fff; }
+.app-header { z-index: 5; display: grid; height: 64px; flex: 0 0 64px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; padding: 0 22px; border-bottom: 1px solid var(--border); background: #fff; }
 .app-header.workspace-header { grid-template-columns: 1fr auto; }
 .brand { display: flex; min-width: 0; align-items: center; gap: 10px; }
-.brand-logo { display: block; width: 32px; height: 32px; object-fit: contain; }
+.brand-logo { display: block; width: 24px; height: 24px; flex: 0 0 auto; object-fit: contain; }
 .brand div { display: flex; align-items: baseline; }
-.brand strong { font-size: 15px; }
+.brand strong { color: var(--text); font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; font-size: 20px; font-weight: 600; line-height: 1.2; }
+.brand-copy { min-width: 0; }
+.brand-title { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; column-gap: 6px; row-gap: 2px; }
+.brand-title > span { white-space: nowrap; }
+.brand-title .brand-subtitle { color: inherit; font-size: inherit; font-weight: inherit; line-height: inherit; }
 .header-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 6px; }
 .header-settings { display: grid; width: 36px; height: 36px; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: #fff; }
 .header-settings:hover { border-color: #b8bdc0; color: var(--accent); background: #f7f8f8; }
@@ -322,20 +337,16 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
 .startup-hint { color: var(--muted); line-height: 1.5; }
 .startup-progress { height: 4px; border-radius: 2px; background: var(--surface-muted); }
 .startup-progress span { border-radius: 2px; background: var(--accent); }
-.app-header { height: 60px; flex-basis: 60px; padding: 0 24px; background: var(--surface); }
+.app-header { padding: 0 24px; background: var(--surface); }
 .brand { gap: 11px; }
-.brand-logo { width: 30px; height: 30px; }
 .brand-copy { display: flex; align-items: baseline; gap: 9px; }
-.brand strong { color: var(--text); font-size: 15px; }
 .brand-copy small { color: var(--text-subtle); font-size: 11px; }
 .header-settings { border-radius: 6px; background: var(--surface); transition: border-color 160ms ease, color 160ms ease, background 160ms ease; }
 .header-settings:hover { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft); }
-@media (max-width: 680px) { .app-header { height: 56px; flex-basis: 56px; padding: 0 16px; }.brand-copy small { display: none; } }
+@media (max-width: 680px) { .app-header { padding: 0 16px; }.brand-copy small { display: none; } }
 
 .app-shell.home { --home-background: #f3f2f1; background-color: var(--home-background); background-image: linear-gradient(rgba(243, 242, 241, .18), rgba(243, 242, 241, .18)), url('/home-background.png'); background-position: center; background-size: cover; background-repeat: no-repeat; }
-.home-header { height: 64px; flex-basis: 64px; grid-template-columns: 1fr auto; gap: 18px; padding: 0 18px; border-bottom: 1px solid rgba(225, 225, 225, .9); background: rgba(255, 255, 255, .4); box-shadow: 0 1.6px 3.6px rgba(0, 0, 0, .13), 0 .3px .9px rgba(0, 0, 0, .1); backdrop-filter: blur(20px); }
-.home-header .brand-logo { width: 24px; height: 24px; }
-.home-header .brand strong { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; font-size: 20px; font-weight: 600; }
+.home-header { grid-template-columns: 1fr auto; gap: 18px; padding: 0 18px; border-bottom: 1px solid rgba(225, 225, 225, .9); background: rgba(255, 255, 255, .4); box-shadow: 0 1.6px 3.6px rgba(0, 0, 0, .13), 0 .3px .9px rgba(0, 0, 0, .1); backdrop-filter: blur(20px); }
 .home-header .brand-copy { gap: 8px; }
 .home-header .brand-copy small { color: #605e5c; font-size: 12px; }
 .home-engine-status { display: inline-flex; align-items: center; gap: 8px; color: #323130; font-size: 11px; text-shadow: 0 1px 2px rgba(255, 255, 255, .7); white-space: nowrap; }
@@ -426,7 +437,7 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
   .playing-engine-status { font-size: 9px; gap: 4px; }
 }
 @media (max-width: 520px) {
-  .playing-summary { max-width: 112px; }
+  .playing-summary { display: none; }
   .playing-summary-copy strong { font-size: 11px; }
   .playing-action-buttons { gap: 3px; }
   .app-header.workspace-header { padding-inline: 10px; }
