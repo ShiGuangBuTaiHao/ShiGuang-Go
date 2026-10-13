@@ -1,6 +1,7 @@
 mod katago;
 mod lan;
 mod gnugo;
+mod library;
 
 use std::path::PathBuf;
 use tauri::Manager;
@@ -37,6 +38,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            library::library_load,
+            library::library_save,
+            library::library_read_files,
+            library::library_export_file,
             katago::engine_status,
             katago::analyze_position,
             katago::final_score,
