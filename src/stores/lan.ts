@@ -112,6 +112,7 @@ export const useLanStore = defineStore('lan', () => {
   })
 
   function applySnapshot(snapshot: GameSnapshot) {
+    error.value = ''
     currentSnapshot.value = snapshot
     game.loadSnapshot(snapshot)
     status.value = snapshot.status === 'finished' ? 'ended' : 'playing'
@@ -149,6 +150,7 @@ export const useLanStore = defineStore('lan', () => {
       return
     }
     if (event.type === 'welcome') {
+      error.value = ''
       connected.value = true
       clearReconnectTimer()
       status.value = 'ready'

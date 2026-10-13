@@ -982,6 +982,34 @@ fn process_host_command(
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum HostWireAction {
+    Reject,
+    ReplyHeartbeat,
+    IgnoreHeartbeatAck,
+    Command,
+}
+
+fn accept_host_message(
+    session: &mut LanSession,
+    connection_id: u64,
+    envelope: &Envelope,
+) -> HostWireAction {
+    if session.role != LanRole::Host
+        || session.session_id != envelope.session_id
+        || session.connection_id != connection_id
+    {
+        return HostWireAction::Reject;
+    }
+    session.last_peer_activity = SystemTime::now();
+    match envelope.message_type.as_str() {
+        "heartbeat" => HostWireAction::ReplyHeartbeat,
+        "heartbeat_ack" => HostWireAction::IgnoreHeartbeatAck,
+        _ if !session.seen_message_ids.insert(envelope.message_id.clone()) => HostWireAction::Reject,
+        _ => HostWireAction::Command,
+    }
+}
+
 fn handle_wire_message(
     state: &LanState,
     app: &AppHandle,
@@ -999,44 +1027,40 @@ fn handle_wire_message(
         );
         return;
     }
-    let (accepted, heartbeat_writer) = state
+    let (action, heartbeat_writer) = state
         .inner
         .lock()
         .ok()
         .and_then(|mut runtime| {
             let session = runtime.session.as_mut()?;
-            if session.role != LanRole::Host
-                || session.session_id != envelope.session_id
-                || session.connection_id != connection_id
-            {
-                return Some((false, None));
-            }
-            session.last_peer_activity = SystemTime::now();
-            if envelope.message_type == "heartbeat" {
-                return Some((true, session.writer.clone()));
-            }
-            if envelope.message_type == "heartbeat_ack" {
-                return Some((true, None));
-            }
-            if !session.seen_message_ids.insert(envelope.message_id.clone()) {
-                return Some((false, None));
-            }
-            Some((true, None))
+            let action = accept_host_message(session, connection_id, &envelope);
+            let writer = if action == HostWireAction::ReplyHeartbeat {
+                session.writer.clone()
+            } else {
+                None
+            };
+            Some((action, writer))
         })
-        .unwrap_or((false, None));
-    if let Some(writer) = heartbeat_writer {
-        let _ = write_envelope(
-            &writer,
-            &make_envelope(
-                &envelope.session_id,
-                "heartbeat_ack",
-                envelope.sequence,
-                json!({}),
-            ),
-        );
+        .unwrap_or((HostWireAction::Reject, None));
+    if action == HostWireAction::ReplyHeartbeat {
+        if let Some(writer) = heartbeat_writer {
+            let _ = write_envelope(
+                &writer,
+                &make_envelope(
+                    &envelope.session_id,
+                    "heartbeat_ack",
+                    envelope.sequence,
+                    json!({}),
+                ),
+            );
+        }
         return;
     }
-    if !accepted {
+    // Heartbeat acknowledgements are transport-level messages, not game commands.
+    if action == HostWireAction::IgnoreHeartbeatAck {
+        return;
+    }
+    if action == HostWireAction::Reject {
         emit_envelope(
             app,
             "error",
@@ -1613,6 +1637,11 @@ pub fn lan_scan_rooms() -> Result<Vec<DiscoveredRoom>, String> {
                 }
                 rooms.push(response.room);
             }
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {
+                // Windows reports ICMP port-unreachable replies for UDP probes as WSAECONNRESET.
+                // A host without the discovery listener is not a scan failure; keep listening.
+                continue;
+            }
             Err(error)
                 if matches!(
                     error.kind(),
@@ -1903,6 +1932,63 @@ mod tests {
             komi_unit: "子".into(),
             time_control: json!({ "preset": "untimed" }),
         }
+    }
+
+    fn host_session() -> LanSession {
+        let config = config();
+        LanSession {
+            role: LanRole::Host,
+            session_id: "test-session".into(),
+            reconnect_token: String::new(),
+            expired_reconnect_token: None,
+            password: String::new(),
+            password_mode: "none".into(),
+            port: DEFAULT_PORT,
+            game: HostGame::new(&config),
+            config,
+            writer: None,
+            client_connected: true,
+            started: true,
+            game_number: 1,
+            connection_id: 1,
+            last_peer_activity: UNIX_EPOCH,
+            disconnected_at: None,
+            pending_undo: None,
+            pending_undo_at: None,
+            seen_message_ids: HashSet::new(),
+        }
+    }
+
+    #[test]
+    fn heartbeat_messages_never_become_game_commands() {
+        let mut session = host_session();
+        for (message_type, expected) in [
+            ("heartbeat", HostWireAction::ReplyHeartbeat),
+            ("heartbeat_ack", HostWireAction::IgnoreHeartbeatAck),
+        ] {
+            let message = make_envelope(&session.session_id, message_type, 0, json!({}));
+            for _ in 0..3 {
+                assert_eq!(accept_host_message(&mut session, 1, &message), expected);
+            }
+        }
+        assert!(session.last_peer_activity > UNIX_EPOCH);
+        assert!(session.seen_message_ids.is_empty());
+        assert_eq!(session.game.move_number, 0);
+    }
+
+    #[test]
+    fn host_messages_validate_session_and_deduplicate_commands() {
+        let mut session = host_session();
+        let wrong_session = make_envelope("old-session", "heartbeat_ack", 0, json!({}));
+        assert_eq!(accept_host_message(&mut session, 1, &wrong_session), HostWireAction::Reject);
+        let ack = make_envelope(&session.session_id, "heartbeat_ack", 0, json!({}));
+        assert_eq!(accept_host_message(&mut session, 2, &ack), HostWireAction::Reject);
+        assert_eq!(session.last_peer_activity, UNIX_EPOCH);
+
+        let command = make_envelope(&session.session_id, "submit_move", 0, json!({ "row": 3, "col": 3 }));
+        assert_eq!(accept_host_message(&mut session, 1, &command), HostWireAction::Command);
+        assert_eq!(accept_host_message(&mut session, 1, &command), HostWireAction::Reject);
+        assert_eq!(session.seen_message_ids.len(), 1);
     }
 
     #[test]
