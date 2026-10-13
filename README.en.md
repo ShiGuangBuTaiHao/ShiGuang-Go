@@ -4,7 +4,7 @@
 
 > A local AI Go desktop application for Windows. The current version is `1.0.0`.
 
-This is a source release. See the [v1.0.0 release notes](RELEASE_NOTES.md) in Chinese. Installers and large engine runtime assets are not included in this release.
+A Windows x64 full installer is available on the [GitHub v1.0.0 release page](https://github.com/ShiGuangBuTaiHao/ShiGuang-Go/releases/tag/v1.0.0). See the [v1.0.0 release notes](RELEASE_NOTES.md) in Chinese and verify the published checksum and hardware requirements before installation. Testing currently focuses on an RTX 4060 Laptop GPU (`sm89`); the installer is unsigned, and license review and clean-machine installation testing remain incomplete.
 
 ## Product Overview
 
@@ -267,7 +267,7 @@ Tests that require real KataGo assets cannot pass without a local engine. The pr
 - Add a formal Chinese/English language switch inside the application.
 - Define a clean distribution path for KataGo models and the TensorRT runtime.
 - Expand the supported platform matrix beyond the currently focused Windows environment.
-- This is a source release. GitHub Actions, installers, and clean-machine validation remain planned work.
+- The Windows x64 full installer is published on GitHub. Gitee mirrors the source and download link but does not yet have a release page. GitHub Actions and clean-machine validation remain planned work.
 
 ## Contributing
 

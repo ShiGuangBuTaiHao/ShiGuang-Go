@@ -4,7 +4,7 @@
 
 > 一个面向 Windows 桌面端的本地 AI 围棋应用。当前版本为 `1.0.0`。
 
-本次为源码发行，更新内容见 [v1.0.0 发行说明](RELEASE_NOTES.md)。安装包及大型引擎运行资源未随本次发行提供。
+Windows x64 完整安装包已提供，下载见 [GitHub v1.0.0 发行页](https://github.com/ShiGuangBuTaiHao/ShiGuang-Go/releases/tag/v1.0.0)，更新内容见 [v1.0.0 发行说明](RELEASE_NOTES.md)。请先核对发行页的校验文件与设备要求；目前重点验证 RTX 4060 Laptop GPU（`sm89`），安装包未签名，许可核对和干净环境安装验证尚未全部完成。
 
 ## 产品介绍
 
@@ -267,7 +267,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 - 应用界面尚未接入正式的中英文语言切换。
 - KataGo 大模型和 TensorRT 运行时的分发方式还需要进一步整理。
 - 当前重点验证环境是 Windows，跨平台构建尚未作为稳定目标发布。
-- 本次为源码发行，后续仍需补充 GitHub Actions、安装包和干净环境验证。
+- GitHub 已发布 Windows x64 完整安装包；Gitee 目前同步源码及下载入口，尚未创建发行页。后续仍需补充 GitHub Actions 和干净环境验证。
 
 ## 贡献代码
 
