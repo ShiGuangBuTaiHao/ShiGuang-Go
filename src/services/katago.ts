@@ -74,6 +74,12 @@ export interface WinratePoint {
 
 export type AnalysisMode = 'fast' | 'deep'
 
+export interface AnalysisPosition {
+  initialStones: KataGoMove[]
+  initialPlayer: GtpPlayer
+  boardSize: number
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 function isDesktopRuntime() {
@@ -115,6 +121,7 @@ export async function analyzePosition(
   komi = 7.5,
   handicap: Handicap = 0,
   maxVisits?: number,
+  position?: AnalysisPosition,
 ): Promise<KataGoAnalysis> {
   if (!isDesktopRuntime()) throw new Error('当前不是 Tauri 桌面环境')
   const engineRule = ruleSet === 'japanese-korean' ? 'japanese' : ruleSet
@@ -128,6 +135,7 @@ export async function analyzePosition(
       komi,
       handicap,
       ...(maxVisits === undefined ? {} : { maxVisits }),
+      ...(position ?? {}),
     },
   })
 }

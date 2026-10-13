@@ -92,6 +92,9 @@ impl KataGoState {
                 rule_set: "chinese".to_string(),
                 komi: 7.5,
                 handicap: 0,
+                initial_stones: None,
+                initial_player: None,
+                board_size: None,
             };
             run_analysis(runtime, &self.data_dir, &mut slot, request, true, None).map(|_| ())
         })();
@@ -172,6 +175,12 @@ pub struct AnalyzeRequest {
     komi: f64,
     #[serde(default)]
     handicap: usize,
+    #[serde(default)]
+    initial_stones: Option<Vec<GtpMove>>,
+    #[serde(default)]
+    initial_player: Option<String>,
+    #[serde(default)]
+    board_size: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -954,9 +963,33 @@ fn run_analysis(
     };
     let turn_number = request.moves.len();
     let human_profile = request.human_profile.clone();
-    let (initial_stones, moves, current_player, _) =
+    let (default_initial_stones, moves, default_current_player, _) =
         split_opening_sequence(request.moves, request.handicap);
-    let current_player = current_player.to_string();
+    let initial_stones = request
+        .initial_stones
+        .map(|stones| {
+            stones
+                .into_iter()
+                .map(|mv| [mv.player.to_uppercase(), mv.coordinate.to_uppercase()])
+                .collect::<Vec<[String; 2]>>()
+        })
+        .unwrap_or(default_initial_stones);
+    let custom_initial_player = request.initial_player.is_some();
+    let initial_player = request
+        .initial_player
+        .unwrap_or_else(|| default_current_player.to_string());
+    let current_player = if custom_initial_player {
+        moves
+            .last()
+            .map(|mv| if mv[0] == "B" { "W" } else { "B" }.to_string())
+            .unwrap_or_else(|| initial_player.clone())
+    } else {
+        default_current_player.to_string()
+    };
+    let board_size = request.board_size.unwrap_or(19);
+    if ![9, 13, 19].contains(&board_size) {
+        return Err("仅支持 9、13、19 路棋盘".to_string());
+    }
     let analysis_turn = moves.len();
     let target_visits = human_profile
         .as_deref()
@@ -973,16 +1006,16 @@ fn run_analysis(
         "initialStones": initial_stones,
         "rules": request.rule_set,
         "komi": kata_go_komi(request.komi),
-        "boardXSize": 19,
-        "boardYSize": 19,
+        "boardXSize": board_size,
+        "boardYSize": board_size,
         "analyzeTurns": [analysis_turn],
         "maxVisits": target_visits,
         "includePolicy": true,
         "includeOwnership": true,
         "includeOwnershipStdev": true
     });
-    if request.handicap > 0 {
-        query["initialPlayer"] = json!(current_player);
+    if request.handicap > 0 || custom_initial_player {
+        query["initialPlayer"] = json!(initial_player);
     }
     if let Some(profile) = human_profile.as_deref() {
         let settings = json!({
@@ -1013,10 +1046,10 @@ fn run_analysis(
     if response.move_infos.is_empty() {
         return Err("KataGo 未返回任何候选点".to_string());
     }
-    if response.ownership.len() != 361 {
+    if response.ownership.len() != board_size * board_size {
         return Err("KataGo 未返回完整 ownership 数据".to_string());
     }
-    if human_profile.is_some() && response.human_policy.len() != 362 {
+    if human_profile.is_some() && response.human_policy.len() != board_size * board_size + 1 {
         return Err("KataGo 未返回完整 Human SL policy 数据".to_string());
     }
     let mut move_infos = response.move_infos;
@@ -1030,10 +1063,10 @@ fn run_analysis(
         root_info,
         move_infos,
         ownership: response.ownership,
-        ownership_stdev: if response.ownership_stdev.len() == 361 {
+        ownership_stdev: if response.ownership_stdev.len() == board_size * board_size {
             response.ownership_stdev
         } else {
-            vec![0.0; 361]
+            vec![0.0; board_size * board_size]
         },
         human_policy: response.human_policy,
     })
@@ -1330,6 +1363,63 @@ mod tests {
 
     #[test]
     #[ignore = "requires the local KataGo executable and model"]
+    fn queries_local_research_setup_positions() {
+        let resources = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+        let runtime = discover_runtime(&resources, &resources)
+            .expect("local KataGo resources are unavailable");
+        let data_dir = std::env::temp_dir().join("shiguang-go-research-setup-test");
+        let mut slot = None;
+        for size in [9, 19] {
+            let moves = if size == 9 {
+                vec![]
+            } else {
+                vec![super::GtpMove {
+                    player: "W".into(),
+                    coordinate: "pass".into(),
+                }]
+            };
+            let result = super::run_analysis(
+                &runtime,
+                &data_dir,
+                &mut slot,
+                super::AnalyzeRequest {
+                    moves,
+                    mode: "fast".into(),
+                    strength: "beginner".into(),
+                    max_visits: Some(16),
+                    human_profile: None,
+                    rule_set: "chinese".into(),
+                    komi: 7.5,
+                    handicap: 0,
+                    initial_stones: Some(vec![
+                        super::GtpMove {
+                            player: "B".into(),
+                            coordinate: "D4".into(),
+                        },
+                        super::GtpMove {
+                            player: "W".into(),
+                            coordinate: "F6".into(),
+                        },
+                    ]),
+                    initial_player: Some("W".into()),
+                    board_size: Some(size),
+                },
+                false,
+                None,
+            )
+            .expect("KataGo should analyze a setup position");
+            assert_eq!(result.ownership.len(), size * size);
+            assert_eq!(result.ownership_stdev.len(), size * size);
+            assert_eq!(
+                result.root_info.current_player,
+                if size == 9 { "W" } else { "B" }
+            );
+            assert!(!result.move_infos.is_empty());
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the local KataGo executable and model"]
     fn queries_local_katago_json_engine() {
         let resources = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
         let runtime = discover_runtime(&resources, &resources)
@@ -1344,6 +1434,9 @@ mod tests {
             rule_set: "chinese".to_string(),
             komi: 7.5,
             handicap: 0,
+            initial_stones: None,
+            initial_player: None,
+            board_size: None,
         };
         let mut analysis_slot = None;
         let mut move_slot = None;
@@ -1374,6 +1467,9 @@ mod tests {
                 rule_set: "chinese".to_string(),
                 komi: 3.75,
                 handicap: 0,
+                initial_stones: None,
+                initial_player: None,
+                board_size: None,
             },
             true,
             None,
@@ -1401,6 +1497,9 @@ mod tests {
                 rule_set: "chinese".to_string(),
                 komi: 1.0,
                 handicap: 2,
+                initial_stones: None,
+                initial_player: None,
+                board_size: None,
             },
             true,
             None,
