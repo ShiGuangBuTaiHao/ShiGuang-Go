@@ -1,8 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { X } from 'lucide-vue-next'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useGameStore } from '../stores/game'
+import { getEngineStatus } from '../services/katago'
+import LanLobbyView from './LanLobbyView.vue'
+import GameSetupMain from '../components/ui/GameSetupMain.vue'
+import GameSetupFooter from '../components/ui/GameSetupFooter.vue'
 import SetupDropdown, { type SetupDropdownOption } from '../components/ui/SetupDropdown.vue'
 import {
   AI_STRENGTHS,
@@ -29,10 +33,20 @@ import {
 } from '../domain/gameSetup'
 
 const router = useRouter()
+const route = useRoute()
 const game = useGameStore()
 const aiSetupVisible = ref(false)
+const aiSetupError = ref('')
+const lanLobbyVisible = computed(() => route.name === 'mode-select' && route.query.dialog === 'lan')
 const setupMode = ref<'ai' | 'human'>('ai')
 const setup = reactive<GameSetup>(loadGameSetup('rank_10k'))
+let lanDialogReturnFocus: HTMLElement | null = null
+watch(lanLobbyVisible, async (visible, wasVisible) => {
+  if (visible || !wasVisible) return
+  await nextTick()
+  lanDialogReturnFocus?.focus()
+  lanDialogReturnFocus = null
+})
 const slogans = ['明日复明日，明日何其多', '时光会把你雕刻成你应有的样子', '你就当那是一段如有神助的时光吧']
 const typedSlogan = ref('')
 const recentGame = ref<{ strength: string; updatedAt: string } | null>(loadRecentGame())
@@ -41,20 +55,8 @@ let characterIndex = 0
 let deleting = false
 let typingTimer: ReturnType<typeof setTimeout> | undefined
 
-const selectedRule = computed(() => RULE_PRESETS[setup.ruleSet])
 const currentKomi = computed(() => komiFor(setup.ruleSet, setup.handicap))
 const currentKomiLabel = computed(() => `${formatKomi(currentKomi.value)}${komiUnitFor(setup.ruleSet)}`)
-const selectedHandicapLabel = computed(() =>
-  HANDICAP_OPTIONS.find((option) => option.value === setup.handicap)?.label ?? '分先',
-)
-const playerColorLabel = computed(() => ({ random: '猜先', black: '执黑', white: '执白' }[setup.playerColor]))
-const timePresetLabel = computed(() => ({
-  blitz: '快棋',
-  standard: '普通',
-  slow: '慢棋',
-  custom: '自定义',
-  untimed: '不计时',
-}[setup.timeControl.preset]))
 
 const playerColorOptions: SetupDropdownOption[] = [
   { value: 'random', label: '猜先', description: '随机决定黑白' },
@@ -146,6 +148,7 @@ function saveRecentGame(strength: string) {
 
 function openGameSetup(mode: 'ai' | 'human') {
   setupMode.value = mode
+  aiSetupError.value = ''
   aiSetupVisible.value = true
   window.addEventListener('keydown', handleSetupKeydown)
 }
@@ -156,6 +159,17 @@ function openAiGameSetup() {
 
 function openHumanGameSetup() {
   openGameSetup('human')
+}
+
+function openLanLobby(event: MouseEvent) {
+  lanDialogReturnFocus = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  router.push({ name: 'mode-select', query: { ...route.query, dialog: 'lan' } })
+}
+
+async function closeLanLobby() {
+  const query = { ...route.query }
+  delete query.dialog
+  await router.replace({ name: 'mode-select', query })
 }
 
 function startRecentGame() {
@@ -218,7 +232,18 @@ function startConfiguredGame(mode: 'ai' | 'human') {
   router.push({ name: mode === 'ai' ? 'play-ai' : 'play-human' })
 }
 
-function startAiGame() {
+async function startAiGame() {
+  aiSetupError.value = ''
+  try {
+    const status = await getEngineStatus()
+    if (!status.configured || status.error) {
+      aiSetupError.value = `KataGo 当前不可用。${status.error ?? status.detail ?? '请检查引擎运行环境。'}`
+      return
+    }
+  } catch (error) {
+    aiSetupError.value = error instanceof Error ? error.message : String(error)
+    return
+  }
   startConfiguredGame('ai')
 }
 
@@ -240,7 +265,7 @@ function handleSetupKeydown(event: KeyboardEvent) {
           <span class="feature-title">人机对局</span>
         </button>
         <div class="feature-stack">
-          <button class="feature-card feature-card-secondary feature-card-lan" type="button" @click="router.push({ name: 'lan-lobby' })">
+          <button class="feature-card feature-card-secondary feature-card-lan" type="button" @click="openLanLobby">
             <span class="feature-title">局域网对局</span>
           </button>
           <button class="feature-card feature-card-secondary feature-card-human" type="button" aria-label="本地对局" @click="openHumanGameSetup">
@@ -264,7 +289,7 @@ function handleSetupKeydown(event: KeyboardEvent) {
 
     <Teleport to="body">
       <div v-if="aiSetupVisible" class="setup-backdrop" @click.self="closeAiGameSetup">
-        <section class="setup-dialog" role="dialog" aria-modal="true" aria-labelledby="setup-title">
+        <section class="setup-dialog" :class="{ 'setup-dialog-local': setupMode === 'human' }" role="dialog" aria-modal="true" aria-labelledby="setup-title">
         <header class="setup-heading">
           <div>
             <h1 id="setup-title">{{ setupMode === 'ai' ? '人机对局' : '本地对局' }}</h1>
@@ -273,55 +298,25 @@ function handleSetupKeydown(event: KeyboardEvent) {
         </header>
 
         <div class="setup-scroll">
-          <div class="setup-summary" aria-live="polite">
-            <span><b>19 路棋盘</b></span>
-            <span>{{ selectedRule.label }}</span>
-            <span>{{ playerColorLabel }}</span>
-            <span>{{ selectedHandicapLabel }}</span>
-            <span>黑贴 {{ currentKomiLabel }}</span>
-            <span>{{ timePresetLabel }}</span>
-          </div>
-
           <div class="setup-layout" :class="{ 'setup-layout-local': setupMode === 'human' }">
-            <div class="setup-main">
-              <section class="setup-section">
-                <div class="section-heading"><h2>执棋方式</h2><span>{{ setupMode === 'ai' ? '决定玩家与 KataGo 的颜色' : '决定双方的执棋颜色' }}</span></div>
-                <div class="select-field">
-                  <span>对局方式</span>
-                  <SetupDropdown :model-value="setup.playerColor" :options="playerColorOptions" ariaLabel="选择执棋方式" @update:model-value="setup.playerColor = $event as GameSetup['playerColor']" />
-                </div>
-              </section>
-
-              <section class="setup-section">
-                <div class="section-heading"><h2>规则预设</h2><span>贴目和计分方式会随预设变化</span></div>
-                <div class="select-field">
-                  <span>规则</span>
-                  <SetupDropdown :model-value="setup.ruleSet" :options="ruleOptions" ariaLabel="选择规则" @update:model-value="setup.ruleSet = $event as GameSetup['ruleSet']" />
-                </div>
-              </section>
-
-              <section class="setup-section">
-                <div class="section-heading"><h2>让子方式</h2><span>让子由黑方让给白方，白方连续落子</span></div>
-                <div class="select-field">
-                  <span>让子</span>
-                  <SetupDropdown :model-value="String(setup.handicap)" :options="handicapOptions" ariaLabel="选择让子方式" @update:model-value="selectHandicap" />
-                </div>
-                <div class="komi-result"><span>本局黑贴</span><strong>{{ currentKomiLabel }}</strong><small>{{ setup.handicap === 0 ? '分先的规则贴目' : '让子后的规则贴目' }}</small></div>
-              </section>
-
-              <section class="setup-section">
-                <div class="section-heading"><h2>用时</h2><span>只限制玩家，AI 思考不计入玩家用时</span></div>
-                <div class="select-field">
-                  <span>计时方案</span>
-                  <SetupDropdown :model-value="setup.timeControl.preset" :options="timeOptions" ariaLabel="选择用时方案" @update:model-value="selectTimePresetValue" />
-                </div>
-                <div v-if="setup.timeControl.preset === 'custom'" class="custom-time-grid">
-                  <div class="custom-time-field"><span>主时间</span><SetupDropdown :model-value="String(setup.timeControl.mainTimeSeconds)" :options="customMainTimeOptions" ariaLabel="选择主时间" @update:model-value="selectCustomMainTime" /></div>
-                  <div class="custom-time-field"><span>读秒时间</span><SetupDropdown :model-value="String(setup.timeControl.byoYomiSeconds)" :options="customByoYomiOptions" ariaLabel="选择读秒时间" @update:model-value="selectCustomByoYomi" /></div>
-                  <div class="custom-time-field"><span>读秒次数</span><SetupDropdown :model-value="String(setup.timeControl.byoYomiPeriods)" :options="customPeriodOptions" ariaLabel="选择读秒次数" @update:model-value="selectCustomPeriods" /></div>
-                </div>
-              </section>
-            </div>
+            <GameSetupMain
+              :setup="setup"
+              :player-color-options="playerColorOptions"
+              :rule-options="ruleOptions"
+              :handicap-options="handicapOptions"
+              :time-options="timeOptions"
+              :custom-main-time-options="customMainTimeOptions"
+              :custom-byo-yomi-options="customByoYomiOptions"
+              :custom-period-options="customPeriodOptions"
+              :komi-label="currentKomiLabel"
+              @update:player-color="setup.playerColor = $event"
+              @update:rule-set="setup.ruleSet = $event"
+              @update:handicap="selectHandicap"
+              @update:time-preset="selectTimePresetValue"
+              @update:main-time-seconds="selectCustomMainTime"
+              @update:byo-yomi-seconds="selectCustomByoYomi"
+              @update:byo-yomi-periods="selectCustomPeriods"
+            />
 
             <aside v-if="setupMode === 'ai'" class="rank-panel">
               <div class="section-heading"><h2>AI 段位</h2><span>Human SL 人类棋力</span></div>
@@ -335,13 +330,17 @@ function handleSetupKeydown(event: KeyboardEvent) {
           </div>
         </div>
 
-        <footer class="setup-actions">
-          <button class="setup-secondary" type="button" @click="closeAiGameSetup">取消</button>
-          <button class="setup-primary" type="button" @click="setupMode === 'ai' ? startAiGame() : startHumanGame()">开始对局</button>
-        </footer>
+        <p v-if="setupMode === 'ai' && aiSetupError" class="ai-setup-error" role="alert">{{ aiSetupError }}</p>
+
+        <GameSetupFooter
+          primary-label="开始对局"
+          @secondary="closeAiGameSetup"
+          @primary="setupMode === 'ai' ? startAiGame() : startHumanGame()"
+        />
       </section>
       </div>
     </Teleport>
+    <LanLobbyView v-if="lanLobbyVisible" @close="closeLanLobby" />
   </main>
 </template>
 
@@ -548,7 +547,7 @@ function handleSetupKeydown(event: KeyboardEvent) {
 .feature-card-primary .feature-title { font-size: 28px; }
 
 .setup-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 22px; background: rgba(50,49,48,.34); }
-.setup-dialog { display: flex; width: min(960px, calc(100vw - 44px)); height: min(820px, calc(100dvh - 44px)); min-height: 0; flex-direction: column; overflow: hidden; border: 1px solid rgba(225,225,225,.9); border-radius: 8px; background: rgba(255,255,255,.4); box-shadow: 0 6.4px 14.4px rgba(0,0,0,.13), 0 1.2px 3.6px rgba(0,0,0,.1); backdrop-filter: blur(20px); }
+.setup-dialog { display: flex; width: min(960px, calc(100vw - 44px)); height: auto; max-height: min(820px, calc(100dvh - 44px)); min-height: 0; flex-direction: column; overflow: hidden; border: 1px solid rgba(225,225,225,.9); border-radius: 8px; background: rgba(255,255,255,.4); box-shadow: 0 6.4px 14.4px rgba(0,0,0,.13), 0 1.2px 3.6px rgba(0,0,0,.1); backdrop-filter: blur(20px); }
 .setup-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 20px; margin: 0; padding: 24px 24px 0; }.setup-heading h1 { margin: 0; color: var(--text); font-size: 24px; }
 .setup-close { display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border: 1px solid transparent; border-radius: 6px; color: #323130; background: transparent; transition: border-color 150ms ease-out, color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out, transform 150ms ease-out; }.setup-close:hover { color: #0078d4; border-color: rgba(255,255,255,.6); background: rgba(255,255,255,.72); box-shadow: 0 1.6px 3.6px rgba(0,0,0,.13), 0 .3px .9px rgba(0,0,0,.1); }.setup-close:active { transform: scale(.97); box-shadow: none; }.setup-close:focus-visible { outline: 2px solid #0078d4; outline-offset: 2px; box-shadow: 0 0 0 4px rgba(255,255,255,.4), 0 0 0 6px #0078d4; }
 .setup-scroll { min-height: 0; flex: 1 1 auto; overflow-y: auto; padding: 18px 24px 24px; }
@@ -559,7 +558,6 @@ function handleSetupKeydown(event: KeyboardEvent) {
 .handicap-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }.handicap-button { min-height: 40px; padding: 0 8px; font-size: 12px; }.komi-result { display: flex; align-items: baseline; gap: 10px; margin-top: 12px; color: #605e5c; font-size: 12px; }.komi-result strong { color: #0078d4; font-size: 16px; }.komi-result small { font-size: 11px; }
 .time-preset-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }.custom-time-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }.custom-time-field { display: grid; gap: 5px; min-width: 0; }.custom-time-field > span { color: var(--muted); font-size: 11px; }
 .rank-panel { align-self: start; padding-left: 22px; border-left: 1px solid rgba(225,225,225,.72); }.rank-selected { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid rgba(225,225,225,.72); color: var(--muted); font-size: 11px; }.rank-selected strong { color: var(--accent); font-size: 20px; }
-.setup-actions { display: flex; flex: 0 0 auto; justify-content: flex-end; gap: 8px; padding: 18px 24px 24px; border-top: 1px solid rgba(225,225,225,.9); background: rgba(255,255,255,.18); }.setup-secondary, .setup-primary { min-height: 40px; padding: 0 18px; border-radius: 6px; font: inherit; font-size: 13px; font-weight: 600; transition: transform 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out; }.setup-secondary { border: 1px solid transparent; color: #323130; background: transparent; }.setup-primary { border: 1px solid #0078d4; color: #fff; background: #0078d4; box-shadow: 0 1.6px 3.6px rgba(0,0,0,.13), 0 .3px .9px rgba(0,0,0,.1); }.setup-secondary:hover { border-color: rgba(255,255,255,.6); color: #0078d4; background: rgba(255,255,255,.72); box-shadow: 0 1.6px 3.6px rgba(0,0,0,.13), 0 .3px  .9px rgba(0,0,0,.1); }.setup-primary:hover { background: #106ebe; box-shadow: 0 3.2px 7.2px rgba(0,0,0,.13), 0 .6px 1.8px rgba(0,0,0,.1); }.setup-secondary:active, .setup-primary:active { transform: scale(.97); box-shadow: none; }.setup-primary:active { background: #005a9e; }.setup-secondary:focus-visible, .setup-primary:focus-visible { outline: 2px solid #0078d4; outline-offset: 2px; box-shadow: 0 0 0 4px rgba(255,255,255,.4), 0 0 0 6px #0078d4; }
 
 @media (max-width: 1024px) {
   .home-main { width: calc(100% - 48px); }
@@ -585,10 +583,9 @@ function handleSetupKeydown(event: KeyboardEvent) {
 }
 @media (max-width: 680px) {
   .setup-backdrop { padding: 12px; }
-  .setup-dialog { width: 100%; height: calc(100dvh - 24px); }
+  .setup-dialog { width: 100%; height: auto; max-height: calc(100dvh - 24px); }
   .setup-heading { padding: 18px 18px 0; }
   .setup-scroll { padding: 18px 18px 20px; }
-  .setup-actions { padding: 18px; }
   .setup-heading h1 { font-size: 20px; }
   .select-field { grid-template-columns: 70px minmax(0, 1fr); gap: 8px; }
   .rank-select-field { grid-template-columns: 1fr; }
@@ -597,7 +594,6 @@ function handleSetupKeydown(event: KeyboardEvent) {
 @media (max-height: 620px) {
   .setup-heading { padding-top: 14px; }
   .setup-scroll { padding-top: 12px; padding-bottom: 14px; }
-  .setup-actions { padding-top: 12px; padding-bottom: 14px; }
 }
 @media (max-width: 440px) {
   .home-workspace { gap: 12px; grid-template-rows: 280px 396px; }
@@ -613,5 +609,11 @@ function handleSetupKeydown(event: KeyboardEvent) {
 }
 @media (prefers-reduced-motion: reduce) {
   .feature-card, .feature-card::before, .recent-game-action { transition: none; }
+}
+.setup-dialog-local { height: auto; max-height: min(820px, calc(100dvh - 44px)); }
+.ai-setup-error { flex: 0 0 auto; margin: 0 24px 4px; padding: 10px 12px; border-left: 3px solid var(--danger); color: var(--danger); background: var(--danger-soft); font-size: 12px; line-height: 1.5; }
+@media (max-width: 680px) {
+  .setup-dialog-local { height: auto; max-height: calc(100dvh - 24px); }
+  .ai-setup-error { margin-inline: 18px; }
 }
 </style>

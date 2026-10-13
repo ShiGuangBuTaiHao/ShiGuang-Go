@@ -36,9 +36,34 @@ html, body, #app { width: 100%; min-width: 360px; min-height: 100%; margin: 0; }
 body { min-height: 100vh; overflow: hidden; background: var(--shell); }
 button { letter-spacing: 0; }
 button:not(:disabled) { cursor: pointer; }
-button:focus-visible, [role='button']:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid #0078d4; outline-offset: 2px; box-shadow: 0 0 0 4px #f3f2f1, 0 0 0 6px #0078d4; }
+button:focus-visible, [role='button']:focus-visible { outline: 2px solid #0078d4; outline-offset: 2px; box-shadow: 0 0 0 4px #f3f2f1, 0 0 0 6px #0078d4; }
 button:disabled { cursor: not-allowed; }
 button, input, select { font: inherit; }
+input:not([type='checkbox'], [type='radio'], [type='range'], [type='button'], [type='submit'], [type='reset'], [type='color'], [type='file'], [type='hidden'], [type='search']), textarea, select {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  background-color: rgba(255, 255, 255, .72);
+  transition: border-color 140ms ease, outline-color 140ms ease, background-color 140ms ease;
+}
+:is(input:not([type='checkbox'], [type='radio'], [type='range'], [type='button'], [type='submit'], [type='reset'], [type='color'], [type='file'], [type='hidden'], [type='search']), textarea, select):hover:not(:disabled):not(:focus-visible) {
+  border-color: #a19f9d;
+}
+:is(input:not([type='checkbox'], [type='radio'], [type='range'], [type='button'], [type='submit'], [type='reset'], [type='color'], [type='file'], [type='hidden'], [type='search']), textarea, select):focus-visible {
+  border: 2px solid var(--accent);
+  outline: none;
+  background-color: var(--surface);
+}
+:is(input:not([type='checkbox'], [type='radio'], [type='range'], [type='button'], [type='submit'], [type='reset'], [type='color'], [type='file'], [type='hidden'], [type='search']), textarea, select):disabled {
+  color: var(--text-subtle);
+  background-color: var(--surface-muted);
+  cursor: not-allowed;
+}
+:is(input:not([type='checkbox'], [type='radio'], [type='range'], [type='button'], [type='submit'], [type='reset'], [type='color'], [type='file'], [type='hidden'], [type='search']), textarea)::placeholder {
+  color: var(--text-subtle);
+  opacity: 1;
+}
 ::selection { color: var(--text); background: rgba(var(--accent-rgb), .18); }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 999px; background: #c8d0ca; background-clip: padding-box; }

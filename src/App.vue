@@ -36,11 +36,12 @@ const startupReady = ref(browserDevelopment)
 const startupChecking = ref(true)
 const retrying = ref(false)
 let statusTimer: ReturnType<typeof setInterval> | undefined
+let enginePollInFlight = false
 
 const engineStatusLabel = computed(() => {
   if (!desktopRuntime) return '引擎离线'
-  if (engineStatus.value?.error) return '引擎异常'
   if (startupChecking.value || engineStatus.value?.warming) return '引擎加载中'
+  if (engineStatus.value?.error || engineStatus.value?.configured === false) return 'KataGo 不可用'
   return engineStatus.value && isReady(engineStatus.value) ? '引擎就绪' : '引擎未就绪'
 })
 
@@ -49,30 +50,45 @@ function isReady(status: EngineStatus) {
 }
 
 async function pollEngineStatus() {
+  if (enginePollInFlight) return
+  enginePollInFlight = true
   try {
     const status = await getEngineStatus()
     engineStatus.value = status
-    startupChecking.value = false
     if (isReady(status)) {
       startupReady.value = true
       if (statusTimer) clearInterval(statusTimer)
+      statusTimer = undefined
+    } else if (!status.configured || status.error) {
+      startupReady.value = true
+      if (statusTimer) clearInterval(statusTimer)
+      statusTimer = undefined
     }
   } catch (error) {
-    startupChecking.value = false
     engineStatus.value = {
       configured: false,
       running: false,
       detail: '引擎状态不可用',
       error: error instanceof Error ? error.message : String(error),
     }
+    startupReady.value = true
+    if (statusTimer) clearInterval(statusTimer)
+    statusTimer = undefined
+  } finally {
+    startupChecking.value = false
+    enginePollInFlight = false
   }
 }
 
-async function retryStartup() {
+async function retryEngine() {
   if (retrying.value) return
   retrying.value = true
-  startupChecking.value = true
-  engineStatus.value = null
+  engineStatus.value = {
+    configured: engineStatus.value?.configured ?? false,
+    running: engineStatus.value?.running ?? false,
+    warming: true,
+    detail: '正在重试 KataGo 引擎',
+  }
   try {
     await warmupEngine()
   } catch (error) {
@@ -124,10 +140,10 @@ watch(isPlaying, (playing) => {
   }
 }, { immediate: true })
 
-onMounted(async () => {
+onMounted(() => {
   if (browserDevelopment) return
-  await pollEngineStatus()
-  statusTimer = setInterval(pollEngineStatus, 500)
+  statusTimer = setInterval(() => { void pollEngineStatus() }, 1000)
+  void pollEngineStatus()
 })
 
 onBeforeUnmount(() => {
@@ -187,14 +203,10 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
 
 <template>
   <div v-if="!startupReady" class="startup-shell">
-    <div class="startup-panel" role="status" aria-live="polite" :aria-busy="!engineStatus?.error">
-      <h1>{{ engineStatus?.error ? '引擎启动失败' : '正在启动 KataGo 引擎' }}</h1>
-      <p class="startup-hint">首次启动可能需要准备 TensorRT 推理缓存</p>
-      <button v-if="engineStatus?.error" class="startup-retry" type="button" :disabled="retrying" @click="retryStartup">
-        <RefreshCw :size="15" :class="{ spin: retrying }" />
-        {{ retrying ? '重试中…' : '重试' }}
-      </button>
-      <div v-else class="startup-progress" role="progressbar" aria-label="正在启动 KataGo 引擎"><span /></div>
+    <div class="startup-panel" role="status" aria-live="polite" aria-busy="true">
+      <h1>正在启动 KataGo 引擎</h1>
+      <p class="startup-hint">首次启动可能需要准备推理缓存</p>
+      <div class="startup-progress" role="progressbar" aria-label="正在启动 KataGo 引擎"><span /></div>
     </div>
   </div>
 
@@ -256,9 +268,12 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
       <span class="home-footer-version">v0.1.0</span>
       <span class="home-footer-runtime">
         <span>本地运行 · KataGo</span>
-        <span class="home-engine-status" :class="{ ready: engineStatus && isReady(engineStatus), error: engineStatus?.error }" role="status" :title="engineStatus?.error ?? engineStatus?.detail ?? 'KataGo 本地引擎仅在桌面端可用'">
+        <span class="home-engine-status" :class="{ ready: engineStatus && isReady(engineStatus), error: engineStatus?.error || engineStatus?.configured === false }" role="status" :title="engineStatus?.error ?? engineStatus?.detail ?? 'KataGo 本地引擎仅在桌面端可用'">
           <span class="home-engine-dot" aria-hidden="true" />{{ engineStatusLabel }}
         </span>
+        <button v-if="engineStatus?.error || engineStatus?.configured === false" class="home-engine-retry" type="button" :disabled="retrying" :aria-label="retrying ? '正在重试 KataGo 引擎' : '重试 KataGo 引擎'" :title="retrying ? '正在重试 KataGo 引擎' : '重试 KataGo 引擎'" @click="retryEngine">
+          <RefreshCw :size="14" :class="{ spin: retrying }" aria-hidden="true" />
+        </button>
       </span>
     </footer>
   </div>
@@ -270,14 +285,9 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
 .startup-panel h1 { margin: 0; color: var(--text); font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size: 24px; font-weight: 600; line-height: 32px; }
 .startup-hint { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 20px; }
 .startup-progress { width: min(240px, 100%); height: 4px; margin-top: 24px; overflow: hidden; border-radius: 2px; background: var(--surface-muted); }
-.startup-progress span { display: block; width: 36%; height: 100%; border-radius: inherit; background: var(--accent); animation: progress 1.25s cubic-bezier(.4, 0, .6, 1) infinite; will-change: transform; }
-.startup-retry { display: inline-flex; min-height: 36px; align-items: center; gap: 7px; margin-top: 24px; padding: 0 14px; border: 1px solid var(--accent); border-radius: 4px; color: #fff; background: var(--accent); font: inherit; font-size: 13px; transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease; }
-.startup-retry:hover:not(:disabled) { border-color: var(--accent-strong); background: var(--accent-strong); }
-.startup-retry:disabled { cursor: wait; opacity: .65; }
-.startup-retry .spin { animation: spin .8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-@keyframes progress { 0% { transform: translateX(-140%); } 50% { transform: translateX(140%); } 100% { transform: translateX(320%); } }
-@media (prefers-reduced-motion: reduce) { .startup-retry .spin, .startup-progress span { animation: none; } }
+.startup-progress span { display: block; width: 36%; height: 100%; border-radius: inherit; background: var(--accent); animation: startup-progress 1.25s cubic-bezier(.4, 0, .6, 1) infinite; will-change: transform; }
+@keyframes startup-progress { 0% { transform: translateX(-140%); } 50% { transform: translateX(140%); } 100% { transform: translateX(320%); } }
+@media (prefers-reduced-motion: reduce) { .startup-progress span { animation: none; } }
 
 .app-shell { display: flex; width: 100%; height: 100vh; min-height: 0; flex-direction: column; overflow: hidden; }
 .app-header { z-index: 5; display: grid; height: 56px; flex: 0 0 56px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; padding: 0 22px; border-bottom: 1px solid var(--border); background: #fff; }
@@ -301,10 +311,6 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
 .startup-hint { color: var(--muted); line-height: 1.5; }
 .startup-progress { height: 4px; border-radius: 2px; background: var(--surface-muted); }
 .startup-progress span { border-radius: 2px; background: var(--accent); }
-.startup-retry { border-radius: 4px; background: var(--accent); }
-.startup-retry:hover:not(:disabled) { background: var(--accent-strong); }
-.startup-retry:active:not(:disabled) { transform: scale(.97); box-shadow: none; background: #005a9e; }
-.startup-retry:focus-visible { outline: 2px solid #0078d4; outline-offset: 2px; box-shadow: 0 0 0 4px var(--shell), 0 0 0 6px #0078d4; }
 .app-header { height: 60px; flex-basis: 60px; padding: 0 24px; background: var(--surface); }
 .brand { gap: 11px; }
 .brand-logo { width: 30px; height: 30px; }
@@ -326,6 +332,12 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
 .home-engine-status.ready .home-engine-dot { background: var(--accent-strong); }
 .home-engine-status.error { color: #e81123; }
 .home-engine-status.error .home-engine-dot { background: currentColor; }
+.home-engine-retry { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 5px; color: #a4262c; background: transparent; transition: border-color 150ms ease-out, color 150ms ease-out, background-color 150ms ease-out; }
+.home-engine-retry:hover:not(:disabled) { border-color: rgba(232, 17, 35, .22); color: #a4262c; background: rgba(255, 255, 255, .72); }
+.home-engine-retry:disabled { cursor: wait; opacity: .58; }
+.home-engine-retry:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.home-engine-retry .spin { animation: engine-retry-spin .8s linear infinite; }
+@keyframes engine-retry-spin { to { transform: rotate(360deg); } }
 .home-header-right { display: flex; width: max-content; min-width: 0; align-items: center; justify-self: end; gap: 18px; }
 .home-header-actions { display: flex; width: auto; flex: 0 0 auto; align-items: center; gap: 4px; }
 .home-nav-button { border-color: transparent; background: transparent; transition: border-color 150ms ease-out, color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out, transform 150ms ease-out; }
@@ -337,6 +349,7 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
 .home-footer-runtime { display: inline-flex; min-width: 0; align-items: center; gap: 12px; }
 @media (max-width: 760px) { .home-header { gap: 10px; padding-inline: 14px; }.home-header-right { gap: 10px; }.home-footer { padding-inline: 14px; } }
 @media (max-width: 440px) { .home-header { position: relative; } .home-header-right { width: auto; min-width: 0; gap: 0; } .home-header-actions { position: absolute; top: 10px; right: 16px; width: auto; } .home-nav-button { color: #323130; background: rgba(255,255,255,.4); } .home-footer { height: 44px; flex-basis: 44px; font-size: 10px; } .home-footer-runtime { gap: 8px; } .home-engine-status { font-size: 10px; } }
+@media (prefers-reduced-motion: reduce) { .home-engine-retry .spin { animation: none; } }
 .app-header.playing {
   grid-template-columns: minmax(0, 1fr) auto;
   border-bottom-color: rgba(225, 225, 225, 0.65);
