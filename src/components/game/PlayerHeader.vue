@@ -7,6 +7,7 @@ const props = defineProps<{
   moveNumber: number
   currentPlayer: 'black' | 'white'
   lastMoveLabel: string
+  scoreEstimate?: string
   blackTime?: string
   whiteTime?: string
   blackClockDetail?: string
@@ -22,7 +23,7 @@ const whiteInitial = computed(() => String(whiteLabel.value).trim().charAt(0).to
 </script>
 
 <template>
-  <header class="match-header" aria-label="对局状态">
+  <header class="match-header" :class="{ 'with-score': props.scoreEstimate }" aria-label="对局状态">
     <div class="match-player black-player">
       <div class="player-avatar black-avatar" :class="{ active: props.currentPlayer === 'black' }" aria-hidden="true">
         {{ blackInitial }}
@@ -36,9 +37,9 @@ const whiteInitial = computed(() => String(whiteLabel.value).trim().charAt(0).to
       </div>
     </div>
 
-    <div class="match-status" aria-live="polite">
-      <strong>第 {{ props.moveNumber }} 手</strong>
-      <span class="status-detail">{{ props.lastMoveLabel || '尚未落子' }}</span>
+    <div class="match-status" :class="{ 'with-score': props.scoreEstimate }" aria-live="polite" aria-atomic="true">
+      <strong>第 {{ props.moveNumber }} 手 · {{ props.lastMoveLabel.toLowerCase() || '尚未落子' }}</strong>
+      <span v-if="props.scoreEstimate" class="score-estimate">{{ props.scoreEstimate }}</span>
     </div>
 
     <div class="match-player white-player">
@@ -65,10 +66,10 @@ const whiteInitial = computed(() => String(whiteLabel.value).trim().charAt(0).to
   min-height: 72px;
   flex: 0 0 72px;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   align-items: center;
   gap: 20px;
   padding: 10px 24px;
-  border-bottom: 1px solid transparent;
   background: rgba(243, 242, 241, 0.2);
   backdrop-filter: blur(2px);
   -webkit-backdrop-filter: blur(2px);
@@ -108,7 +109,9 @@ const whiteInitial = computed(() => String(whiteLabel.value).trim().charAt(0).to
 
 .match-status { display: grid; min-width: 136px; gap: 1px; justify-items: center; line-height: 1.2; text-align: center; }
 .match-status strong { color: var(--text); font-size: 13px; }
-.status-detail { color: var(--accent); font-size: 11px; font-weight: 600; line-height: 1.2; }
+.match-header.with-score { flex-basis: auto; }
+.match-status.with-score { min-width: 0; max-width: 160px; }
+.score-estimate { min-width: 0; max-width: 100%; color: var(--accent); font-size: 11px; font-weight: 600; overflow-wrap: anywhere; line-height: 1.4; text-align: center; font-variant-numeric: tabular-nums; }
 
 @media (max-width: 760px) {
   .match-header { min-height: 64px; flex-basis: 64px; gap: 10px; padding: 8px 14px; }
@@ -116,11 +119,11 @@ const whiteInitial = computed(() => String(whiteLabel.value).trim().charAt(0).to
   .player-name { max-width: 88px; font-size: 12px; }
   .player-side-label, .player-clock small { display: none; }
   .match-status { min-width: 96px; }
+  .match-status.with-score { max-width: 136px; }
 }
 
 @media (max-width: 480px) {
   .player-name { max-width: 58px; }
   .match-status { min-width: 78px; }
-  .status-detail { display: none; }
 }
 </style>

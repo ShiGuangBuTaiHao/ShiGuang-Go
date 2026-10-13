@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import { useRoute, useRouter } from "vue-router";
 import GoBoard from "../components/board/GoBoard.vue";
 import PlayerHeader from "../components/game/PlayerHeader.vue";
 import ControlsPanel from "../components/game/ControlsPanel.vue";
-import GameActionBar from "../components/game/GameActionBar.vue";
 import GameSettingsDialog from "../components/game/GameSettingsDialog.vue";
+import SaveGameRecord from "../components/library/SaveGameRecord.vue";
 import { CheckCircle2, LoaderCircle, X } from "lucide-vue-next";
 import { boardHash, coordinateLabel, positionFromCoordinate } from "../domain/go";
-import { assessPositionStability, calculateScore, inferDeadStones } from "../domain/scoring";
-import { ownershipTerritory } from "../domain/territory";
+import { assessPositionStability, calculateScore } from "../domain/scoring";
+import { createRefereeScore, refereeKomi } from "../domain/referee";
+import { adjudicateWithGnuGo, cancelGnuGoAdjudication, cancelGnuGoRequest, estimateWithGnuGo, type GnuGoEstimate } from "../services/gnugo";
+import { assessGnuGoScoringReadiness, formatGnuGoLead, gnuGoTerritory, validateGnuGoEstimate } from "../domain/gnugoEstimate";
 import { loadBoardStyle, saveBoardStyle, type BoardStyle } from "../domain/boardTheme";
 import {
   AUTO_RECOMMENDATION_BUDGETS,
@@ -51,6 +53,7 @@ import type {
   Stone,
   TerritoryMarker,
   GameScore,
+  RefereeGameScore,
 } from "../types/game";
 
 // ── State ──────────────────────────────────────────────────────────────
@@ -71,11 +74,16 @@ const gameSetup = ref<GameSetup>(loadGameSetup("rank_10k"));
 const engineStatus = ref<EngineStatus | null>(null);
 const analysis = ref<KataGoAnalysis | null>(null);
 const recommendationLoading = ref(false);
-const territoryLoading = ref(false);
 const realtimeAnalysisLoading = ref(false);
 const aiThinking = ref(false);
 const recommendationVisible = ref(false);
-const territoryVisible = ref(false);
+const gnuGoEstimateVisible = ref(false);
+const gnuGoEstimateLoading = ref(false);
+const territoryVisible = gnuGoEstimateVisible;
+const territoryLoading = gnuGoEstimateLoading;
+const gnuGoEstimateError = ref("");
+const gnuGoEstimate = ref<GnuGoEstimate | null>(null);
+let gnuGoEstimateRequestId: string | null = null;
 const deadStones = ref<Set<string>>(new Set());
 const moveNumbersEnabled = ref(false);
 const coordinatesEnabled = ref(true);
@@ -96,6 +104,16 @@ const scoreProposalText = ref("");
 const scoreProposalCooldown = ref(0);
 const lastObservedMoveNumber = ref(0);
 const gameSettingsVisible = ref(false);
+const refereeVisible = ref(false);
+const refereeLoading = ref(false);
+const refereeError = ref("");
+const refereeStage = ref<'checking' | 'scoring' | 'unsettled'>('checking');
+const refereeResult = ref<RefereeGameScore | null>(null);
+const refereePositionKey = ref("");
+const refereeConfirmations = ref<Stone[]>([]);
+const refereeDialog = ref<HTMLElement | null>(null);
+let refereeRestoreFocus: HTMLElement | null = null;
+let refereeRequestId: string | null = null;
 type ConfirmAction = "undo" | "pass" | "resign" | "reset";
 const pendingAction = ref<ConfirmAction | null>(null);
 const aiStrength = ref<AiStrength>(resolveAiStrength(gameSetup.value.aiStrength ?? route.query.strength));
@@ -138,20 +156,24 @@ const aiTurn = computed(() => isAiMode.value && current.value.currentPlayer === 
 const blackPlayerName = computed(() => (isAiMode.value ? playerColor.value === "black" ? "你" : "KataGo" : "玩家一"));
 const whitePlayerName = computed(() => (isAiMode.value ? playerColor.value === "white" ? "你" : "KataGo" : "玩家二"));
 const analysisBusy = computed(() => recommendationLoading.value || territoryLoading.value || realtimeAnalysisLoading.value);
+const gnuGoEstimateDisabled = computed(() => analysisLocked.value || scoringVisible.value || scoringLoading.value
+  || current.value.handicapRemaining > 0 || pendingAction.value !== null);
 const gameFinished = computed(() => current.value.status === "finished");
 const timelineLocked = computed(
   () =>
+    refereeVisible.value ||
     aiThinking.value ||
     (isAiMode.value && aiTurn.value && !gameFinished.value)
 );
 const boardLocked = computed(
   () =>
+    refereeVisible.value ||
     gameFinished.value ||
     (isAiMode.value &&
       (aiTurn.value || aiThinking.value))
 );
 const analysisLocked = computed(
-  () => !gameFinished.value && isAiMode.value && (aiTurn.value || aiThinking.value),
+  () => refereeVisible.value || (!gameFinished.value && isAiMode.value && (aiTurn.value || aiThinking.value)),
 );
 const passDisabled = computed(
   () => boardLocked.value || current.value.moveNumber === 0 || current.value.handicapRemaining > 0
@@ -160,13 +182,24 @@ const twoPassesAwaitingScore = computed(
   () => !isAiMode.value && current.value.result?.reason === "two-passes",
 );
 const scoreDisabled = computed(
-  () => (!isAiMode.value && !twoPassesAwaitingScore.value && current.value.moveNumber < MIN_SCORING_MOVES)
+  () => refereeVisible.value || (!isAiMode.value && !twoPassesAwaitingScore.value && current.value.moveNumber < MIN_SCORING_MOVES)
     || (boardLocked.value && !twoPassesAwaitingScore.value)
     || scoreApplication.value
     || scoringLoading.value
     || scoreProposalVisible.value
     || scoreProposalCooldown.value > 0,
 );
+const refereeDisabled = computed(() =>
+  isAiMode.value || refereeVisible.value || scoringVisible.value || scoringLoading.value
+  || pendingAction.value !== null || current.value.handicapRemaining > 0
+  || current.value.moveNumber === 0 || (gameFinished.value && !twoPassesAwaitingScore.value),
+);
+const refereeSummary = computed(() => {
+  const result = refereeResult.value;
+  if (!result) return "";
+  if (result.margin === 0) return "双方和棋";
+  return `${result.margin > 0 ? "黑方" : "白方"}胜 ${Math.abs(result.margin).toFixed(1)} 目`;
+});
 const scoreTitle = computed(() =>
   current.value.moveNumber < MIN_SCORING_MOVES
     ? `数子将在第 ${MIN_SCORING_MOVES} 手后可用`
@@ -306,25 +339,29 @@ const candidates = computed<CandidateMarker[]>(() =>
     .filter((candidate): candidate is CandidateMarker => candidate !== null)
 );
 
-const aiTerritory = computed<TerritoryMarker[]>(() =>
-  territoryVisible.value
-    ? ownershipTerritory(
-        current.value.board,
-        analysis.value?.ownership ?? null,
-        analysis.value?.ownershipStdev ?? null
-      )
-    : []
+const displayedTerritory = computed<TerritoryMarker[]>(() =>
+  gnuGoEstimateVisible.value && gnuGoEstimate.value
+    ? gnuGoTerritory(current.value.board, gnuGoEstimate.value.influenceRegions)
+    : [],
+);
+const matchScoreEstimate = computed(() =>
+  gnuGoEstimateVisible.value && gnuGoEstimate.value
+    ? formatGnuGoLead(gnuGoEstimate.value.scoreLead)
+    : undefined,
 );
 
-const displayedTerritory = computed<TerritoryMarker[]>(() => aiTerritory.value);
-
-const displayedDeadStones = computed<Position[]>(() =>
-  [...(scoringVisible.value ? scoreDeadStones.value : deadStones.value)]
+const displayedDeadStones = computed<Position[]>(() => {
+  if (gnuGoEstimateVisible.value && gnuGoEstimate.value && !refereeVisible.value && !scoringVisible.value) {
+    return (gnuGoEstimate.value.deadStones ?? [])
+      .map((coordinate) => positionFromCoordinate(coordinate))
+      .filter((point): point is Position => point !== null && Boolean(current.value.board[point.row]?.[point.col]));
+  }
+  return [...(refereeVisible.value ? refereeResult.value?.deadStones ?? [] : scoringVisible.value ? scoreDeadStones.value : deadStones.value)]
     .map((value) => value.split(":").map(Number))
     .filter(([row, col]) => Number.isInteger(row) && Number.isInteger(col))
     .map(([row, col]) => ({ row, col }))
-    .filter((point) => Boolean(current.value.board[point.row]?.[point.col]))
-);
+    .filter((point) => Boolean(current.value.board[point.row]?.[point.col]));
+});
 
 const moveNumbers = computed<MoveNumberMarker[]>(() => {
   const markers = new Map<string, MoveNumberMarker>();
@@ -414,7 +451,7 @@ function resetPlayerByoYomiAfterMove() {
 }
 
 function playerClockIsRunning(side: Stone): boolean {
-  return timedGame.value && clockOwner.value === side && !gameFinished.value && !aiThinking.value;
+  return timedGame.value && clockOwner.value === side && !gameFinished.value && !aiThinking.value && !refereeVisible.value;
 }
 
 function handlePlayerTimeout() {
@@ -483,20 +520,180 @@ function rememberAnalysis(result: KataGoAnalysis) {
   ].sort((a, b) => a.moveNumber - b.moveNumber);
 }
 
-function updateDeadStoneJudgement(result: KataGoAnalysis | null | undefined) {
-  if (!territoryVisible.value || !result || current.value.moveNumber === 0) {
-    deadStones.value = new Set();
-    return;
-  }
-  deadStones.value = inferDeadStones(
-    current.value.board,
-    result.ownership ?? null,
-    result.ownershipStdev ?? null
-  );
-}
-
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function requestReferee() {
+  if (refereeDisabled.value) return;
+  const id = crypto.randomUUID();
+  let activeRequestId = id;
+  const key = positionKey();
+  refereeRestoreFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  refereeRequestId = id;
+  refereePositionKey.value = key;
+  refereeVisible.value = true;
+  void nextTick(() => refereeDialog.value?.querySelector<HTMLElement>('button')?.focus());
+  refereeLoading.value = true;
+  refereeStage.value = 'checking';
+  refereeError.value = "";
+  refereeResult.value = null;
+  refereeConfirmations.value = [];
+  resultModalVisible.value = false;
+  recommendationVisible.value = false;
+  territoryVisible.value = false;
+  clearShapeState();
+  analysisRequestToken += 1;
+  realtimeAnalysisSequence += 1;
+  realtimeAnalysisLoading.value = false;
+  void cancelAnalysis();
+  rememberClock();
+  const moves = current.value.moves.map((move) => ({ ...move }));
+  const currentPlayer = current.value.currentPlayer;
+  const ruleSet = gameSetup.value.ruleSet;
+  const komi = refereeKomi(gameSetup.value);
+  try {
+    await closeGnuGoEstimate();
+    if (refereeRequestId !== id || !refereeVisible.value || positionKey() !== key) return;
+    const estimate = await estimateWithGnuGo(id, moves, currentPlayer, ruleSet, komi, true);
+    if (refereeRequestId !== id || !refereeVisible.value || positionKey() !== key) return;
+    const position = validateGnuGoEstimate(estimate, current.value.board);
+    const readiness = assessGnuGoScoringReadiness(position);
+    if (!readiness.ready) {
+      refereeStage.value = 'unsettled';
+      game.resumeAfterScore();
+      // Resuming after two passes triggers the position watcher. Restore the
+      // overlay after that watcher has invalidated the previous analysis.
+      await nextTick();
+      if (refereeRequestId === id && positionKey() === key && refereeVisible.value) {
+        gnuGoEstimate.value = position;
+        gnuGoEstimateVisible.value = true;
+      }
+      return;
+    }
+    gnuGoEstimate.value = position;
+    gnuGoEstimateVisible.value = true;
+    refereeStage.value = 'scoring';
+    void nextTick(() => refereeDialog.value?.querySelector<HTMLElement>('button')?.focus());
+    // Each isolated process has its own cancellation ID; completed IDs cannot
+    // be reused because the backend remembers them to handle early cancellation.
+    const scoringId = crypto.randomUUID();
+    activeRequestId = scoringId;
+    refereeRequestId = scoringId;
+    const result = await adjudicateWithGnuGo(scoringId, moves, ruleSet, komi);
+    if (refereeRequestId !== scoringId || positionKey() !== key || !refereeVisible.value) return;
+    refereeResult.value = createRefereeScore(result, current.value.board, ruleSet, komi);
+  } catch (error) {
+    if (refereeRequestId === activeRequestId && refereeVisible.value && positionKey() === key) {
+      refereeStage.value = 'scoring';
+      refereeError.value = errorText(error);
+      void nextTick(() => refereeDialog.value?.querySelector<HTMLElement>('button')?.focus());
+    }
+  } finally {
+    if (refereeRequestId === activeRequestId) refereeLoading.value = false;
+  }
+}
+
+async function requestGnuGoEstimate() {
+  if (gnuGoEstimateLoading.value || gnuGoEstimateDisabled.value) return;
+  const requestId = crypto.randomUUID();
+  const key = positionKey();
+  gnuGoEstimateRequestId = requestId;
+  gnuGoEstimateVisible.value = false;
+  gnuGoEstimateLoading.value = true;
+  gnuGoEstimateError.value = "";
+  gnuGoEstimate.value = null;
+  try {
+    const result = await estimateWithGnuGo(
+      requestId,
+      current.value.moves.map((move) => ({ ...move })),
+      current.value.currentPlayer,
+      gameSetup.value.ruleSet,
+      refereeKomi(gameSetup.value),
+    );
+    if (gnuGoEstimateRequestId !== requestId || positionKey() !== key) return;
+    gnuGoEstimate.value = validateGnuGoEstimate(result, current.value.board);
+    gnuGoEstimateVisible.value = true;
+    clearShapeState();
+  } catch (error) {
+    if (gnuGoEstimateRequestId === requestId) gnuGoEstimateError.value = errorText(error);
+  } finally {
+    if (gnuGoEstimateRequestId === requestId) gnuGoEstimateLoading.value = false;
+  }
+}
+
+function closeGnuGoEstimate(): Promise<void> {
+  const requestId = gnuGoEstimateRequestId;
+  gnuGoEstimateRequestId = null;
+  gnuGoEstimateVisible.value = false;
+  gnuGoEstimateLoading.value = false;
+  gnuGoEstimateError.value = "";
+  gnuGoEstimate.value = null;
+  return requestId ? cancelGnuGoRequest(requestId).catch(() => {}) : Promise.resolve();
+}
+
+function closeReferee(resumeGame = true) {
+  const id = refereeRequestId;
+  const estimate = resumeGame && gnuGoEstimateVisible.value ? gnuGoEstimate.value : null;
+  const key = positionKey();
+  refereeRequestId = null;
+  if (id) void cancelGnuGoAdjudication(id).catch(() => {});
+  refereeVisible.value = false;
+  refereeLoading.value = false;
+  refereeResult.value = null;
+  refereeError.value = "";
+  refereeConfirmations.value = [];
+  if (resumeGame) game.resumeAfterScore();
+  if (!resumeGame) void closeGnuGoEstimate();
+  lastClockTick = Date.now();
+  if (resumeGame) void nextTick(() => {
+    // Two-pass resumption changes status and clears analysis in the watcher.
+    // Preserve the completed estimate only while the original position remains.
+    if (estimate && positionKey() === key && !refereeVisible.value && !gameFinished.value) {
+      gnuGoEstimate.value = estimate;
+      gnuGoEstimateVisible.value = true;
+    }
+    refereeRestoreFocus?.focus();
+  });
+}
+
+function handleRefereeKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    closeReferee();
+    return;
+  }
+  if (event.key !== 'Tab' || !refereeDialog.value) return;
+  const buttons = [...refereeDialog.value.querySelectorAll<HTMLButtonElement>('button:not([disabled])')];
+  const first = buttons[0];
+  const last = buttons.at(-1);
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last?.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first?.focus();
+  }
+}
+
+function confirmReferee(side: Stone) {
+  const result = refereeResult.value;
+  if (!result || refereeLoading.value || refereeConfirmations.value.includes(side)) return;
+  if (positionKey() !== refereePositionKey.value) {
+    refereeError.value = "棋盘已变化，请取消后重新申请数子";
+    return;
+  }
+  refereeConfirmations.value = [...refereeConfirmations.value, side];
+  if (refereeConfirmations.value.length < 2) return;
+  const winner = result.margin > 0 ? "black" : result.margin < 0 ? "white" : null;
+  if (!game.score(winner, result)) {
+    refereeError.value = game.message;
+    refereeConfirmations.value = [];
+    return;
+  }
+  closeReferee(false);
+  resultModalVisible.value = true;
 }
 
 function showEngineError(error: unknown) {
@@ -537,7 +734,6 @@ async function runAnalysis(
       generation === gameGeneration &&
       current.value.moveNumber === moveNumber
     ) {
-      updateDeadStoneJudgement(cached);
       return cached;
     }
     return null; // stale request
@@ -560,7 +756,6 @@ async function runAnalysis(
 
     analysisCache.set(key, result);
     rememberAnalysis(result);
-    updateDeadStoneJudgement(result);
     clearEngineError();
     void refreshEngineStatus();
     return result;
@@ -661,10 +856,12 @@ function closeScoring(resumeGame = true) {
   if (resumeGame && isAiMode.value && aiTurn.value && !gameFinished.value && !scoreProposalVisible.value) {
     void playAiMove();
   }
+  if (resumeGame && !isAiMode.value) game.resumeAfterScore();
 }
 
 async function startScoring() {
   if (scoringLoading.value) return;
+  void closeGnuGoEstimate();
   if (!isAiMode.value) {
     if (!twoPassesAwaitingScore.value && current.value.moveNumber < MIN_SCORING_MOVES) return;
     scoringVisible.value = true;
@@ -793,29 +990,11 @@ function closeRecommendations() {
 }
 
 async function requestTerritory() {
-  if (analysisLocked.value || analysisBusy.value) return;
-  const generation = gameGeneration;
-  const moveNumber = current.value.moveNumber;
-  territoryLoading.value = true;
-  territoryVisible.value = false;
-  try {
-    const result = await runAnalysis("fast", "normal", undefined, RECOMMENDATION_BUDGETS.high);
-    if (
-      result &&
-      generation === gameGeneration &&
-      current.value.moveNumber === moveNumber
-    ) {
-      analysis.value = result;
-      territoryVisible.value = true;
-      updateDeadStoneJudgement(result);
-    }
-  } finally {
-    territoryLoading.value = false;
-  }
+  await requestGnuGoEstimate();
 }
 
 function closeTerritory() {
-  territoryVisible.value = false;
+  void closeGnuGoEstimate();
   clearShapeState();
 }
 
@@ -873,7 +1052,6 @@ async function playAiMove() {
     )
       return;
 
-    updateDeadStoneJudgement(result);
     clearEngineError();
 
     if (scoreProposalCooldown.value === 0 && current.value.moveNumber >= MIN_SCORING_MOVES) {
@@ -1047,6 +1225,10 @@ function startAnotherGame() {
 
 function handleResultModalKeydown(event: KeyboardEvent) {
   if (event.key !== "Escape") return;
+  if (refereeVisible.value) {
+    closeReferee();
+    return;
+  }
   if (gameSettingsVisible.value) {
     gameSettingsVisible.value = false;
     return;
@@ -1079,6 +1261,8 @@ function handleUndo() {
 }
 
 function performReset() {
+  closeGnuGoEstimate();
+  closeReferee(false);
   invalidateAiRequest();
   void cancelAnalysis();
   aiResignStreak = 0;
@@ -1121,7 +1305,7 @@ function confirmPendingAction() {
       rememberClock();
       game.pass();
       if (current.value.status === "finished" && twoPassesAwaitingScore.value && !isAiMode.value) {
-        void startScoring();
+        void requestReferee();
       } else if (current.value.status === "finished") {
         resultModalVisible.value = true;
       }
@@ -1160,6 +1344,7 @@ watch(
     territoryVisible.value = false;
     clearShapeState();
     analysis.value = null;
+    closeGnuGoEstimate();
 
     if (gameFinished.value) return;
 
@@ -1192,6 +1377,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  closeReferee(false);
   window.removeEventListener("open-game-settings", openGameSettings);
   window.removeEventListener("keydown", handleResultModalKeydown);
   void cancelAnalysis();
@@ -1205,6 +1391,7 @@ function setImmersiveMode(value: boolean) {
 }
 
 function openGameSettings() {
+  if (refereeVisible.value) return;
   gameSettingsVisible.value = true;
 }
 
@@ -1219,10 +1406,6 @@ function setRecommendationEnabled(value: boolean) {
 function setBoardStyle(value: BoardStyle) {
   boardStyle.value = value;
   saveBoardStyle(value);
-}
-
-function exitImmersiveMode() {
-  setImmersiveMode(false);
 }
 
 </script>
@@ -1242,6 +1425,7 @@ function exitImmersiveMode() {
         :move-number="current.moveNumber"
         :current-player="current.currentPlayer"
         :last-move-label="lastMoveLabel"
+        :score-estimate="matchScoreEstimate"
       />
 
       <div class="board-stage">
@@ -1264,23 +1448,6 @@ function exitImmersiveMode() {
         />
       </div>
 
-      <GameActionBar
-        :can-undo="canUndo"
-        :pass-disabled="passDisabled"
-        :resign-disabled="boardLocked"
-        :reset-disabled="aiThinking"
-        :timeline-locked="timelineLocked"
-        :game-finished="gameFinished"
-        :score-disabled="scoreDisabled"
-        :score-title="scoreTitle"
-        :immersive="immersiveEnabled"
-        @undo="handleUndo"
-        @pass="handlePass"
-        @resign="handleResign"
-        @score="startScoring"
-        @reset="handleReset"
-        @exit-immersive="exitImmersiveMode"
-      />
     </main>
     <ControlsPanel
         :recommendation-visible="recommendationVisible"
@@ -1292,16 +1459,70 @@ function exitImmersiveMode() {
         :engine-status="engineStatus"
         :recommendation-loading="recommendationLoading"
         :territory-loading="territoryLoading"
+        :territory-disabled="gnuGoEstimateDisabled"
+        :territory-error="gnuGoEstimateError"
         :analysis-busy="analysisBusy || (aiThinking && !gameFinished)"
         :analysis="analysis"
         :history="visibleWinrateHistory"
         :perspective="winratePerspective"
+        :can-undo="canUndo"
+        :pass-disabled="passDisabled"
+        :resign-disabled="boardLocked"
+        :reset-disabled="aiThinking || refereeVisible"
+        :timeline-locked="timelineLocked"
+        :game-finished="gameFinished"
+        :score-visible="!isAiMode"
+        :score-disabled="scoreDisabled"
+        :score-title="scoreTitle"
+        :referee-visible="!isAiMode"
+        :referee-disabled="refereeDisabled"
         @request-recommendation="requestRecommendations"
         @close-recommendation="closeRecommendations"
         @request-territory="requestTerritory"
         @close-territory="closeTerritory"
         @update:perspective="winratePerspective = $event"
+        @undo="handleUndo"
+        @pass="handlePass"
+        @resign="handleResign"
+        @score="startScoring"
+        @referee="requestReferee"
+        @reset="handleReset"
     />
+  </div>
+
+  <div v-if="refereeVisible" class="result-modal-backdrop confirm-modal-backdrop">
+    <section ref="refereeDialog" class="result-modal confirm-modal referee-modal" :class="{ 'referee-detailed': refereeResult || refereeError }" role="dialog" aria-modal="true" aria-labelledby="referee-title" @keydown="handleRefereeKeydown">
+      <div class="result-modal-heading">
+        <button class="result-modal-close" type="button" aria-label="取消数子申请" title="关闭" @click="closeReferee()"><X :size="18" stroke-width="2" aria-hidden="true" /></button>
+      </div>
+      <div class="result-modal-body">
+        <div v-if="refereeLoading" class="scoring-loading" role="status" aria-live="polite">
+          <LoaderCircle class="spin" :size="28" aria-hidden="true" />
+          <h2 id="referee-title">{{ refereeStage === 'checking' ? '正在检查收官状态' : '正在计算胜负' }}</h2>
+        </div>
+        <template v-else-if="refereeStage === 'unsettled'">
+          <h2 id="referee-title">尚未收官，暂不能数子</h2>
+        </template>
+        <template v-else-if="refereeResult">
+          <h2 id="referee-title">{{ refereeSummary }}</h2>
+          <p class="result-modal-hint">{{ rulePreset.label }} · 贴 {{ refereeResult.komi }} 目 · 死子 {{ refereeResult.deadStones.length }} 颗</p>
+          <p class="score-state stable" role="status" aria-live="polite">{{ refereeConfirmations.length ? '等待另一方确认' : '等待双方确认' }}</p>
+          <div class="referee-confirmations">
+            <button class="result-action" type="button" :disabled="refereeConfirmations.includes('black')" @click="confirmReferee('black')">
+              <CheckCircle2 v-if="refereeConfirmations.includes('black')" :size="16" aria-hidden="true" />{{ refereeConfirmations.includes('black') ? '黑方已确认' : '黑方确认' }}
+            </button>
+            <button class="result-action" type="button" :disabled="refereeConfirmations.includes('white')" @click="confirmReferee('white')">
+              <CheckCircle2 v-if="refereeConfirmations.includes('white')" :size="16" aria-hidden="true" />{{ refereeConfirmations.includes('white') ? '白方已确认' : '白方确认' }}
+            </button>
+          </div>
+        </template>
+        <h2 v-else id="referee-title">数子未完成</h2>
+        <p v-if="refereeError" class="score-error" role="alert">{{ refereeError }}</p>
+      </div>
+      <div class="result-modal-actions">
+        <button class="result-action primary" type="button" @click="closeReferee()">继续对局</button>
+      </div>
+    </section>
   </div>
 
   <div v-if="scoreProposalVisible && !pendingAction" class="result-modal-backdrop confirm-modal-backdrop">
@@ -1401,6 +1622,7 @@ function exitImmersiveMode() {
         <p class="result-modal-hint result-copy">{{ gameResultCopy }}</p>
       </div>
       <div class="result-modal-actions result-modal-actions-separated">
+        <SaveGameRecord :snapshot="current" :black="blackPlayerName" :white="whitePlayerName" :rule-set="gameSetup.ruleSet" :komi="refereeKomi(gameSetup)" />
         <button class="result-action" type="button" @click="startAnotherGame">
           再来一局
         </button>
@@ -1446,6 +1668,9 @@ function exitImmersiveMode() {
 </template>
 
 <style scoped>
+.referee-confirmations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; width: 100%; }
+.referee-confirmations .result-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; min-height: 44px; white-space: normal; }
+.referee-confirmations .result-action:disabled { opacity: .65; cursor: default; }
 .workspace {
   display: grid;
   grid-template-columns: minmax(600px, 1fr) 340px;
@@ -1701,6 +1926,10 @@ function exitImmersiveMode() {
   height: 216px;
   grid-template-rows: 146px 70px;
 }
+.confirm-modal.referee-detailed {
+  height: auto;
+  grid-template-rows: minmax(146px, auto) 70px;
+}
 .confirm-modal .result-modal-body {
   display: grid;
   min-height: 0;
@@ -1891,6 +2120,12 @@ function exitImmersiveMode() {
 .board-stage {
   min-height: 0;
   padding: 24px 32px;
+  background: rgba(243, 242, 241, 0.2);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.workspace :deep(.game-sidebar) {
   background: rgba(243, 242, 241, 0.2);
   backdrop-filter: blur(2px);
   -webkit-backdrop-filter: blur(2px);
