@@ -1,0 +1,329 @@
+{
+  "version": "1.0.0",
+  "commit": "7dba4b75e04cb8e3d41478262700f15037df25dc",
+  "build": "full-local-validation",
+  "uploadApproved": false,
+  "builtAt": "2026-10-13T20:43:16.268Z",
+  "resources": [
+    {
+      "path": "resources/katago/abseil_dll.dll",
+      "size": 2009600,
+      "sha256": "c7c6682540250401ecf274c7babd3c133047de9d7ea6f6b618417c3b5cbf2781"
+    },
+    {
+      "path": "resources/katago/analysis.cfg",
+      "size": 24271,
+      "sha256": "2076d6bdb4d8d2d935198704565d77a49d812368e9b2f382250824aa21ef24ce"
+    },
+    {
+      "path": "resources/katago/bz2.dll",
+      "size": 75776,
+      "sha256": "ce4a0c4b2e8d4409efb9e882df0adeba4a7332ab5194483aff50a28efee27897"
+    },
+    {
+      "path": "resources/katago/cacert.pem",
+      "size": 225619,
+      "sha256": "4b6a2b426133cfd7d661ae2ce3c0be6792784f4b29809532e689fbbcbb1c7818"
+    },
+    {
+      "path": "resources/katago/contribute_example.cfg",
+      "size": 7079,
+      "sha256": "55b348852f060d3f0fc1bfd7492118c19da040b744ef2b2d847187cba3b02270"
+    },
+    {
+      "path": "resources/katago/default_gtp.cfg",
+      "size": 35114,
+      "sha256": "7461a4606a077bbf0993ad46773ff447bb6e0caa36b53d01b1c3bdc4b56c7263"
+    },
+    {
+      "path": "resources/katago/gtp_human5k_example.cfg",
+      "size": 12440,
+      "sha256": "a56f5c64429f843766c8c5e0fe252cbf06149cd1bbad0384276ad537da355752"
+    },
+    {
+      "path": "resources/katago/gtp_human9d_search_example.cfg",
+      "size": 6310,
+      "sha256": "783c3d34208c41a5669cccb80adf85dff76fce8062fe71b2602dfaa468e5666b"
+    },
+    {
+      "path": "resources/katago/katago.exe",
+      "size": 5369856,
+      "sha256": "6c7f407234289a18ed77a1f0a8065042b10615d33a4ea1f9a046fcecacc9c02a"
+    },
+    {
+      "path": "resources/katago/libcrypto-3-x64.dll",
+      "size": 5357568,
+      "sha256": "1c2152bcb085a7a85b1e81a0a8cb8c353a4c02fe4bb3b46c5e8b75903b2d0cfd"
+    },
+    {
+      "path": "resources/katago/libprotobuf.dll",
+      "size": 11439616,
+      "sha256": "6f0241c22baf50b7d0a777c3398edef7d58c06c2c5ce6408f0e63e99f27581f6"
+    },
+    {
+      "path": "resources/katago/libssl-3-x64.dll",
+      "size": 878080,
+      "sha256": "d29823911faf71b9d71aa7be306887a6d090dc11dff48e1d432ece66ad534229"
+    },
+    {
+      "path": "resources/katago/match_example.cfg",
+      "size": 10601,
+      "sha256": "883545ac09673e3f2cfe0980f90226d3674838be4e9b7343e6afc7c6eddeb3a9"
+    },
+    {
+      "path": "resources/katago/model.bin.gz",
+      "size": 271440852,
+      "sha256": "c5bca453d7b08ea8df6546439325d4dd681e77d975e1da3f7593d771147b73bc"
+    },
+    {
+      "path": "resources/katago/msvcp140.dll",
+      "size": 643512,
+      "sha256": "7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca"
+    },
+    {
+      "path": "resources/katago/msvcp140_1.dll",
+      "size": 35768,
+      "sha256": "206c931bf90fdad8816de3b5e2ef80b2bcaa9406c89ecc05fe6fddffe251e982"
+    },
+    {
+      "path": "resources/katago/msvcp140_2.dll",
+      "size": 274872,
+      "sha256": "d50d7883f20d1dc6191768d3746f52dd9cac89c346ffaed5be1f110c2f34a838"
+    },
+    {
+      "path": "resources/katago/msvcp140_atomic_wait.dll",
+      "size": 57792,
+      "sha256": "3d0cbfaa1bf3eecf5a3f4491d2960ee803cb994f30292c6adc4a07c498f60e2b"
+    },
+    {
+      "path": "resources/katago/msvcp140_codecvt_ids.dll",
+      "size": 31160,
+      "sha256": "8a65c7596ef2e6938731f5a1058e7e40145b6d97967cc649231a076b9a608d78"
+    },
+    {
+      "path": "resources/katago/nvinfer_10.dll",
+      "size": 375807600,
+      "sha256": "673963c7080cd2aaaed8952323fa50959bfba7b445d8f839174d22cf104c6117"
+    },
+    {
+      "path": "resources/katago/nvinfer_builder_resource_sm89_10.dll",
+      "size": 185069168,
+      "sha256": "03a66aecd28023c1eb2898560e1d4c1172e9cc061df667b5ddf1b2cc67a2d244"
+    },
+    {
+      "path": "resources/katago/nvinfer_plugin_10.dll",
+      "size": 43435120,
+      "sha256": "92c535753fb989a495bde05774719abb12dd5fa2b727a0f8a9b805b92fd91069"
+    },
+    {
+      "path": "resources/katago/nvonnxparser_10.dll",
+      "size": 3268208,
+      "sha256": "e665fae31bf1006bea2a8409d32193e38e79e3073a59d8ee62bafbbd1a61fe48"
+    },
+    {
+      "path": "resources/katago/README.txt",
+      "size": 5903,
+      "sha256": "f0e2564dd12f3d09e3466398e04505fb01755409aa5713767be5faeccfda2198"
+    },
+    {
+      "path": "resources/katago/vcruntime140.dll",
+      "size": 178616,
+      "sha256": "d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7"
+    },
+    {
+      "path": "resources/katago/vcruntime140_1.dll",
+      "size": 50112,
+      "sha256": "a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e"
+    },
+    {
+      "path": "resources/katago/vcruntime140_threads.dll",
+      "size": 38840,
+      "sha256": "40f39e8cee5f5a531b4010e18b807e8fe265b908dc58f959ecb7ebc6ea6cb11a"
+    },
+    {
+      "path": "resources/katago/z.dll",
+      "size": 91648,
+      "sha256": "a07ca94d3843a64b8b916ed83899ad9029578f1a931ec088d81da82834459e0c"
+    },
+    {
+      "path": "resources/katago/zip.dll",
+      "size": 114688,
+      "sha256": "0d88c137ddfaf3a506672cdc8da35658a1ea15fb5fd9d91950cb0658266e600e"
+    },
+    {
+      "path": "resources/katago-estimate/abseil_dll.dll",
+      "size": 2009600,
+      "sha256": "c7c6682540250401ecf274c7babd3c133047de9d7ea6f6b618417c3b5cbf2781"
+    },
+    {
+      "path": "resources/katago-estimate/analysis_example.cfg",
+      "size": 24279,
+      "sha256": "6ef462dacaf39bebf91c0bce1dd90cc6e5ec6f14d1a987cde7e2ff49775f4b1e"
+    },
+    {
+      "path": "resources/katago-estimate/bz2.dll",
+      "size": 75776,
+      "sha256": "ce4a0c4b2e8d4409efb9e882df0adeba4a7332ab5194483aff50a28efee27897"
+    },
+    {
+      "path": "resources/katago-estimate/cacert.pem",
+      "size": 225619,
+      "sha256": "4b6a2b426133cfd7d661ae2ce3c0be6792784f4b29809532e689fbbcbb1c7818"
+    },
+    {
+      "path": "resources/katago-estimate/contribute_example.cfg",
+      "size": 7079,
+      "sha256": "55b348852f060d3f0fc1bfd7492118c19da040b744ef2b2d847187cba3b02270"
+    },
+    {
+      "path": "resources/katago-estimate/default_gtp.cfg",
+      "size": 35114,
+      "sha256": "7461a4606a077bbf0993ad46773ff447bb6e0caa36b53d01b1c3bdc4b56c7263"
+    },
+    {
+      "path": "resources/katago-estimate/g170e-b20c256x2-s2430231552-d525879064.bin.gz",
+      "size": 87357603,
+      "sha256": "770f65c5cfa6e7ebba1b972768406668afdfc2e65d61e45b8cb468677f5fea4d"
+    },
+    {
+      "path": "resources/katago-estimate/gtp_human5k_example.cfg",
+      "size": 12440,
+      "sha256": "a56f5c64429f843766c8c5e0fe252cbf06149cd1bbad0384276ad537da355752"
+    },
+    {
+      "path": "resources/katago-estimate/gtp_human9d_search_example.cfg",
+      "size": 6310,
+      "sha256": "783c3d34208c41a5669cccb80adf85dff76fce8062fe71b2602dfaa468e5666b"
+    },
+    {
+      "path": "resources/katago-estimate/katago.exe",
+      "size": 5369856,
+      "sha256": "6c7f407234289a18ed77a1f0a8065042b10615d33a4ea1f9a046fcecacc9c02a"
+    },
+    {
+      "path": "resources/katago-estimate/libcrypto-3-x64.dll",
+      "size": 5357568,
+      "sha256": "1c2152bcb085a7a85b1e81a0a8cb8c353a4c02fe4bb3b46c5e8b75903b2d0cfd"
+    },
+    {
+      "path": "resources/katago-estimate/libprotobuf.dll",
+      "size": 11439616,
+      "sha256": "6f0241c22baf50b7d0a777c3398edef7d58c06c2c5ce6408f0e63e99f27581f6"
+    },
+    {
+      "path": "resources/katago-estimate/libssl-3-x64.dll",
+      "size": 878080,
+      "sha256": "d29823911faf71b9d71aa7be306887a6d090dc11dff48e1d432ece66ad534229"
+    },
+    {
+      "path": "resources/katago-estimate/match_example.cfg",
+      "size": 10601,
+      "sha256": "883545ac09673e3f2cfe0980f90226d3674838be4e9b7343e6afc7c6eddeb3a9"
+    },
+    {
+      "path": "resources/katago-estimate/msvcp140.dll",
+      "size": 643512,
+      "sha256": "7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca"
+    },
+    {
+      "path": "resources/katago-estimate/msvcp140_1.dll",
+      "size": 35768,
+      "sha256": "206c931bf90fdad8816de3b5e2ef80b2bcaa9406c89ecc05fe6fddffe251e982"
+    },
+    {
+      "path": "resources/katago-estimate/msvcp140_2.dll",
+      "size": 274872,
+      "sha256": "d50d7883f20d1dc6191768d3746f52dd9cac89c346ffaed5be1f110c2f34a838"
+    },
+    {
+      "path": "resources/katago-estimate/msvcp140_atomic_wait.dll",
+      "size": 57792,
+      "sha256": "3d0cbfaa1bf3eecf5a3f4491d2960ee803cb994f30292c6adc4a07c498f60e2b"
+    },
+    {
+      "path": "resources/katago-estimate/msvcp140_codecvt_ids.dll",
+      "size": 31160,
+      "sha256": "8a65c7596ef2e6938731f5a1058e7e40145b6d97967cc649231a076b9a608d78"
+    },
+    {
+      "path": "resources/katago-estimate/README.txt",
+      "size": 5903,
+      "sha256": "f0e2564dd12f3d09e3466398e04505fb01755409aa5713767be5faeccfda2198"
+    },
+    {
+      "path": "resources/katago-estimate/vcruntime140.dll",
+      "size": 178616,
+      "sha256": "d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7"
+    },
+    {
+      "path": "resources/katago-estimate/vcruntime140_1.dll",
+      "size": 50112,
+      "sha256": "a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e"
+    },
+    {
+      "path": "resources/katago-estimate/vcruntime140_threads.dll",
+      "size": 38840,
+      "sha256": "40f39e8cee5f5a531b4010e18b807e8fe265b908dc58f959ecb7ebc6ea6cb11a"
+    },
+    {
+      "path": "resources/katago-estimate/z.dll",
+      "size": 91648,
+      "sha256": "a07ca94d3843a64b8b916ed83899ad9029578f1a931ec088d81da82834459e0c"
+    },
+    {
+      "path": "resources/katago-estimate/zip.dll",
+      "size": 114688,
+      "sha256": "0d88c137ddfaf3a506672cdc8da35658a1ea15fb5fd9d91950cb0658266e600e"
+    },
+    {
+      "path": "resources/katago-human/b18c384nbt-humanv0.bin.gz",
+      "size": 99066230,
+      "sha256": "637746e44f0efe00ad1245a50aa9bbf0716efe364c43965ead97bd6835d84ab5"
+    },
+    {
+      "path": "resources/gnugo/BUILD.md",
+      "size": 3181,
+      "sha256": "1ce4f04b0dbd0e42ca0bf4fff0bd83c98fb972b2c4be65b6428af529da75a5c1"
+    },
+    {
+      "path": "resources/gnugo/COPYING",
+      "size": 35147,
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+    },
+    {
+      "path": "resources/gnugo/gnugo-3.8-source.tar.gz",
+      "size": 3200454,
+      "sha256": "da68d7a65f44dcf6ce6e4e630b6f6dd9897249d34425920bfdd4e07ff1866a72"
+    },
+    {
+      "path": "resources/gnugo/gnugo.exe",
+      "size": 6994432,
+      "sha256": "857dd911bc62e5040e5c01b9a11cdcc76014abcb8401c28cdf67c20fbdf926fc"
+    },
+    {
+      "path": "resources/gnugo/modern-cmake.patch",
+      "size": 897,
+      "sha256": "e3093c95ea9b43950a62692e17bb2e6bf99751cb81fd76cd0671cde7f564eb4e"
+    },
+    {
+      "path": "resources/gnugo/README",
+      "size": 8891,
+      "sha256": "4f9cb5fb159a0cf04d527b5509395047346da527a971b58bf1caa10122d9397b"
+    },
+    {
+      "path": "resources/katago/cudart64_13.dll",
+      "size": 555120,
+      "sha256": "7c50bf7f7398b5d1b654af19ff6a679988cf251cab677dbd8abac69fa1cce310"
+    },
+    {
+      "path": "resources/katago/nvrtc64_130_0.dll",
+      "size": 94861936,
+      "sha256": "d9adefe6df8a585ddbfabeab4a3a374d7601faf32d31316df933be71bcb14240"
+    },
+    {
+      "path": "resources/katago/nvrtc-builtins64_132.dll",
+      "size": 4535408,
+      "sha256": "b1a3f27ae868e40b2fd6b846bae9488478d735b35fe96baf5d1808ebde2ff12f"
+    }
+  ]
+}

@@ -3,8 +3,9 @@
 ## 当前状态
 
 - 源码标签：`v1.0.0`，提交 `7dba4b75e04cb8e3d41478262700f15037df25dc`。
-- 原源码与标签已同步至 GitHub 和 Gitee；GitHub 现已发布完整安装包及 6 个配套附件，大小和 SHA-256 均与本地一致。Gitee 尚无发行页：本机有 SSH 源码推送权限，但缺少发行 API 授权。本状态核对于 2026 年 10 月 14 日。
-- 下载入口：`https://github.com/ShiGuangBuTaiHao/ShiGuang-Go/releases/tag/v1.0.0`。安装包、`SHA256SUMS.txt`、`INSTALLATION.md`、`resource-manifest.json`、`license-review.json`、`THIRD_PARTY_ASSETS.md` 和 `THIRD-PARTY-LICENSES.zip` 均为公开附件。
+- 原源码与标签已同步至 GitHub 和 Gitee；GitHub 完整版发行现保留 4 个附件，大小和 SHA-256 均与本地一致。Gitee 尚无发行页：本机有 SSH 源码推送权限，但缺少发行 API 授权。本状态核对于 2026 年 10 月 14 日。
+- 下载入口：`https://github.com/ShiGuangBuTaiHao/ShiGuang-Go/releases/tag/v1.0.0`。发行附件仅保留安装包、`SHA256SUMS.txt`、`INSTALLATION.md` 和 `THIRD-PARTY-LICENSES.zip`；另有 GitHub 自动提供的两个源码压缩包。
+- 已从发行附件移除的核对资料保留在仓库：[原构建资源清单](resource-manifest.json)、[原构建许可核对记录](license-review.json)、[第三方资源说明](../../THIRD_PARTY_ASSETS.md)。文件内容未因附件精简而删去。
 - 本地安装包：`output/v1.0.0-full/ShiGuang-Go_1.0.0_windows-x64-full-setup.exe`，1,060,459,499 字节。
 - 安装包 SHA-256：`c68180f563c74bebdbfab5776132381bbe73b3d54cdc6256c4e625bfac866fbd`。
 - 本地打包程序的 13 项界面检查通过，包括启动、棋盘绘制、落子、悔棋、取消数子、SGF 导入及备注编辑；启动使用包内 KataGo 资源。

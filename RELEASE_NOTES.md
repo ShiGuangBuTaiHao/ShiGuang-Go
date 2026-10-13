@@ -10,6 +10,8 @@
 
 下载后先核对 `SHA256SUMS.txt`，运行安装器；安装和设备要求见附件 `INSTALLATION.md`。完整包提供已捆绑的本地资源，不表示适用于全部硬件或无需显卡驱动。
 
+发行页保留 4 个附件：安装包、`SHA256SUMS.txt`、`INSTALLATION.md` 和 `THIRD-PARTY-LICENSES.zip`。普通用户只需下载安装包；底部两个 `Source code` 为源码压缩包，不用于安装软件。
+
 安装包 SHA-256：`c68180f563c74bebdbfab5776132381bbe73b3d54cdc6256c4e625bfac866fbd`。
 
 ## 发行注意事项
@@ -18,7 +20,7 @@
 - 安装包不安装 NVIDIA 显卡驱动，首次 AI 启动可能需要生成推理缓存。
 - 安装包未进行数字签名，Windows 可能显示发布者未知或安全提示。
 - 依项目所有者明确要求发布现有安装包；TensorRT/CUDA、Visual C++ 运行库的完整再分发依据、图片分发条件及项目级许可证仍未全部确认。本发行不代表这些问题已经完成审核。
-- 发行附件另含补充许可资料；安装包未重新构建纳入这些后续文件。参见 `THIRD_PARTY_ASSETS.md`、`license-review.json` 及 `THIRD-PARTY-LICENSES.zip`。
+- 发行附件 `THIRD-PARTY-LICENSES.zip` 保留补充许可资料；安装包未重新构建纳入这些后续文件。其他核对资料保留在源码仓库：[第三方资源说明](https://github.com/ShiGuangBuTaiHao/ShiGuang-Go/blob/main/THIRD_PARTY_ASSETS.md)、[原构建许可核对记录](https://github.com/ShiGuangBuTaiHao/ShiGuang-Go/blob/main/release/v1.0.0/license-review.json)、[资源清单](https://github.com/ShiGuangBuTaiHao/ShiGuang-Go/blob/main/release/v1.0.0/resource-manifest.json)。精简附件不表示许可问题已经解决。
 
 ## 主要功能
 
