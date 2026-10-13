@@ -2,7 +2,9 @@
 
 [中文](README.md) | [English](README.en.md)
 
-> A local AI Go desktop application for Windows. The current version is `0.1.0` and is still under active development.
+> A local AI Go desktop application for Windows. The current version is `1.0.0`.
+
+This is a source release. See the [v1.0.0 release notes](RELEASE_NOTES.md) in Chinese. Installers and large engine runtime assets are not included in this release.
 
 ## Product Overview
 
@@ -28,10 +30,11 @@ The project is designed for:
 | Time settings | Implemented | Blitz, standard, slow, custom, and untimed presets. |
 | Basic game actions | Implemented | Captures, suicide prevention, ko, undo, redo, pass, resign, and restart. |
 | AI analysis | Implemented | Win rate, score lead, candidate moves, and on-demand recommendations. |
-| AI territory prediction | Implemented | Uses KataGo ownership data to display board influence and possible dead stones. |
+| AI territory prediction | Implemented | Local games use GNU Go estimates; research and LAN games use KataGo ownership. |
+| Final adjudication | Implemented | GNU Go checks scoring readiness, identifies dead stones, and proposes a final result for local games. Cancelling resumes play. |
 | Move numbers | Implemented | Shows move order on stones. |
-| Research board | Partial | Free placement is available; variation trees and analysis are still in development. |
-| Game library | UI placeholder | SGF import, save, search, and game management are not implemented yet. |
+| Research board | Implemented | Setup editing, variation trees, marks, notes, undo/redo, SGF import/export, and KataGo analysis. |
+| Game library | Implemented | Local SQLite storage, search and filters, favorites, tags, collections, batch operations, trash, and backups. |
 
 ## Language Support
 
@@ -94,7 +97,9 @@ After a move, undo, redo, or restart, previous analysis becomes stale and must b
 
 ### 6. Research board and game library
 
-The research board currently supports free placement and board clearing. Variation trees, markers, principal variation previews, and analysis are planned. The game library is currently a UI placeholder; SGF import, save, and search are planned features.
+The research board supports moves, setup editing, marks, notes, variation navigation, main-line promotion, undo/redo, draft restoration, and KataGo analysis. Import SGF files, preview AI variations, add them to the tree, and export SGF or save to the library.
+
+The game library supports imports, saving, search and filters, favorites, tags, collections, review status, batch operations, trash, and backups. Local and LAN games can be archived and opened for research.
 
 ## Development Requirements
 
@@ -258,12 +263,11 @@ Tests that require real KataGo assets cannot pass without a local engine. The pr
 
 ## Known Limitations and Roadmap
 
-- Complete the research variation tree, markers, and analysis.
-- Add SGF import, export, saving, and search to the game library.
+- GNU Go adjudication supports Chinese and Japanese/Korean rules, not AGA rules. Scoring readiness is a conservative heuristic, not a proof of a settled position.
 - Add a formal Chinese/English language switch inside the application.
 - Define a clean distribution path for KataGo models and the TensorRT runtime.
 - Expand the supported platform matrix beyond the currently focused Windows environment.
-- Add GitHub Actions, release packages, screenshots, and a changelog.
+- This is a source release. GitHub Actions, installers, and clean-machine validation remain planned work.
 
 ## Contributing
 

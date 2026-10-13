@@ -1,7 +1,7 @@
 {
   "name": "shiguang-go",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "packageManager": "npm@11.8.0",
   "type": "module",
   "scripts": {

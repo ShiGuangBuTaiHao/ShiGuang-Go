@@ -1,6 +1,6 @@
 [package]
 name = "shiguang-go"
-version = "0.1.0"
+version = "1.0.0"
 description = "A local AI Go desktop application powered by KataGo"
 authors = ["ShiGuang-Go"]
 license = ""
