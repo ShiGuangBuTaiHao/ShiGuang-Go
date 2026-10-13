@@ -21,12 +21,18 @@
 | KataGo Human SL model | `src-tauri/resources/katago-human/` | 人类风格棋力 | 待补充 | 待确认 | 建议单独发布并记录校验值 |
 | TensorRT / CUDA DLL | `src-tauri/resources/katago/` | GPU 推理运行时 | 待补充 | 待确认 | 需要确认 NVIDIA 再分发条款 |
 | Windows runtime DLL | `src-tauri/resources/katago*/` | Windows 程序运行依赖 | 待补充 | 待确认 | 需要确认各 DLL 来源和许可 |
-| Board and home images | `public/` | 首页、棋盘和功能入口视觉资源 | 项目资源 / 待补充 | 待确认 | 逐项确认来源 |
+| Board and home images | `public/` | 首页、棋盘和功能入口视觉资源 | AI 生成（用户说明，平台待补充） | 待核对生成平台的适用条款 | 已记录生成来源说明，尚未完成许可核对 |
 | Board SVG assets | `public/board-themes/` | 棋子和棋盘主题 | 项目资源 / 待补充 | 待确认 | 逐项确认来源 |
 | Vue | `package.json` | 前端框架 | 以 lockfile 为准 | 待确认 | 依赖许可需保留 |
 | Tauri | `package.json`, `src-tauri/Cargo.toml` | 桌面容器和原生桥接 | 以 lockfile 为准 | 待确认 | 依赖许可需保留 |
 | ECharts | `package.json` | 胜率图表 | 以 lockfile 为准 | 待确认 | 依赖许可需保留 |
 | lucide-vue-next | `package.json` | 界面图标 | 以 lockfile 为准 | 待确认 | 依赖许可需保留 |
+
+## 图片来源补充
+
+2026 年 10 月 14 日，项目所有者说明项目图片由 AI 生成。当前已记录该说明，尚未确认生成平台、模型、生成时间及对应文件范围，因此暂不将图片标记为许可核对完成。
+
+后续补充生成平台与适用条款，并确认是否使用第三方参考图片。该说明不自动涵盖 SVG、字体、图标及其他依赖资源，也不代替项目自身发行许可证的选择。
 
 ## 推荐记录格式
 
