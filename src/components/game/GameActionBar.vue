@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import {
   Calculator,
+  ChevronLeft,
+  ChevronRight,
   Flag,
   Minimize2,
   Pause,
@@ -9,7 +11,10 @@ import {
 } from 'lucide-vue-next'
 
 defineProps<{
+  variant?: 'game' | 'research'
   canUndo: boolean
+  canGoBack?: boolean
+  canGoForward?: boolean
   passDisabled: boolean
   resignDisabled: boolean
   resetDisabled?: boolean
@@ -21,6 +26,8 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{
+  (event: 'back'): void
+  (event: 'forward'): void
   (event: 'undo'): void
   (event: 'pass'): void
   (event: 'resign'): void
@@ -32,7 +39,25 @@ const emit = defineEmits<{
 
 <template>
   <div class="match-action-bar">
-    <div class="match-action-group" aria-label="对局操作">
+    <div v-if="variant === 'research'" class="match-action-group" aria-label="研究操作">
+      <button class="match-action" type="button" :disabled="!canGoBack" aria-label="上一个局面" title="上一个局面" @click="emit('back')">
+        <ChevronLeft :size="16" aria-hidden="true" />
+        <span>上一个</span>
+      </button>
+      <button class="match-action" type="button" :disabled="!canGoForward" aria-label="下一个局面" title="下一个局面" @click="emit('forward')">
+        <ChevronRight :size="16" aria-hidden="true" />
+        <span>下一个</span>
+      </button>
+      <button class="match-action" type="button" :disabled="passDisabled" aria-label="停一手" title="停一手" @click="emit('pass')">
+        <Pause :size="16" aria-hidden="true" />
+        <span>停一手</span>
+      </button>
+      <button class="match-action" type="button" :disabled="resetDisabled" aria-label="重新开始" title="重新开始" @click="emit('reset')">
+        <RotateCcw :size="16" aria-hidden="true" />
+        <span>重新开始</span>
+      </button>
+    </div>
+    <div v-else class="match-action-group" aria-label="对局操作">
       <button
         class="match-action"
         type="button"

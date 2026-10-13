@@ -13,6 +13,8 @@
     "desktop:build": "tauri build"
   },
   "dependencies": {
+    "@sabaki/go-board": "^1.4.3",
+    "@sabaki/sgf": "^3.5.0",
     "@tauri-apps/api": "^2.8.0",
     "echarts": "^6.0.0",
     "lucide-vue-next": "^0.468.0",

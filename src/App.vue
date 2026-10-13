@@ -11,7 +11,7 @@ const router = useRouter()
 const isHome = computed(() => route.name === 'mode-select')
 const desktopRuntime = isTauri()
 const browserDevelopment = import.meta.env.DEV && !desktopRuntime
-const isPlaying = computed(() => route.name === 'play-human' || route.name === 'play-ai' || route.name === 'play-lan')
+const isPlaying = computed(() => route.name === 'play-human' || route.name === 'play-ai' || route.name === 'play-lan' || route.name === 'research')
 const isLanGame = computed(() => route.name === 'play-lan')
 const immersiveEnabled = ref(false)
 const leaveConfirmVisible = ref(false)
@@ -153,6 +153,10 @@ onBeforeUnmount(() => {
 })
 
 function openGameSettings() {
+  if (route.name === 'research') {
+    router.push({ name: 'settings' })
+    return
+  }
   window.dispatchEvent(new Event('open-game-settings'))
 }
 

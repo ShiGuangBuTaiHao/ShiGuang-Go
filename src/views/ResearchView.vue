@@ -1,238 +1,302 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { ArrowLeft, BrainCircuit, ChevronLeft, ChevronRight, CircleDot, Eraser, RotateCcw, Sparkles } from 'lucide-vue-next'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { ArrowLeft, ArrowUpToLine, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, FilePlus2, FolderOpen, GitBranch, Hash, Library, MessageSquare, Pause, Redo2, Save, Target, Trash2, Undo2, X, Grid2X2 } from 'lucide-vue-next'
 import GoBoard from '../components/board/GoBoard.vue'
-import PlayerHeader from '../components/game/PlayerHeader.vue'
+import ResearchModeToolbar from '../components/research/ResearchModeToolbar.vue'
+import VariationTree from '../components/research/VariationTree.vue'
+import ResearchEvaluation from '../components/research/ResearchEvaluation.vue'
+import { useResearchAnalysis } from '../composables/useResearchAnalysis'
+import { useResearchStore } from '../stores/research'
 import { loadBoardStyle } from '../domain/boardTheme'
 import { positionFromCoordinate } from '../domain/go'
 import { researchPath } from '../domain/researchTree'
-import { useResearchStore } from '../stores/research'
-import type { MoveNumberMarker } from '../types/game'
+import { importResearchSgf } from '../domain/researchSgf'
+import { decodeSgfFile } from '../domain/sgf'
+import { ownershipTerritory } from '../domain/territory'
+import { downloadRecords, listLibrary, saveResearchRecord } from '../services/library'
+import type { LibraryRecord } from '../types/library'
+import type { CandidateMarker, MoveNumberMarker, Stone } from '../types/game'
 
-const router = useRouter()
 const research = useResearchStore()
-const { tree, current, message, canGoBack, canGoForward, setupStone, markType } = storeToRefs(research)
-const boardStyle = loadBoardStyle()
+const { tree, current, mode, setupStone, markType, message, line, lineIndex, graph, canGoBack, canGoForward, canUndo, canRedo, onMainLine } = storeToRefs(research)
+const ai = useResearchAnalysis(research)
+const { analysis, candidates, history, status, error, live, preview, previewTree, displayNode, candidatesVisible, territoryVisible } = ai
+const analysisMode = ai.mode
+const route = useRoute()
+const router = useRouter()
+const boardStyle = ref(loadBoardStyle())
+const perspective = ref<'black' | 'white'>('black')
+const moveNumbersVisible = ref(true)
+const libraryVisible = ref(false)
+const libraryRecords = ref<LibraryRecord[]>([])
+const libraryQuery = ref('')
+const libraryLoading = ref(false)
+const currentRecordId = computed({ get: () => research.recordId, set: (id: string | null) => { research.recordId = id } })
+const fileInput = ref<HTMLInputElement | null>(null)
+const saving = ref(false)
+const documentMessage = ref('')
+const confirmAction = ref<{ title: string; message: string; label: string; run: () => void } | null>(null)
+const confirmDialog = ref<HTMLElement | null>(null)
+const boardStage = ref<HTMLElement | null>(null)
+let restoreFocus: HTMLElement | null = null
 
-const moveNumbers = computed<MoveNumberMarker[]>(() => researchPath(tree.value).flatMap((node) => {
-  if (!node.move || node.move.pass) return []
-  const position = positionFromCoordinate(node.move.coordinate, tree.value.boardSize)
-  return position ? [{ ...position, moveNumber: node.snapshot.moveNumber, stone: node.move.stone }] : []
+const filteredRecords = computed(() => {
+  const query = libraryQuery.value.trim().toLowerCase()
+  return libraryRecords.value.filter((record) => !record.deletedAt && (!query || [record.title, record.black, record.white].join(' ').toLowerCase().includes(query)))
+})
+const displayPath = computed(() => researchPath(previewTree.value ?? tree.value))
+const moveNumbers = computed<MoveNumberMarker[]>(() => displayPath.value.flatMap((node) => node.move && !node.move.pass ? [{ row: node.move.row!, col: node.move.col!, moveNumber: node.snapshot.moveNumber, stone: node.move.stone }] : []))
+const lastMove = computed(() => displayNode.value.snapshot.lastMove && displayNode.value.move ? { ...displayNode.value.snapshot.lastMove, stone: displayNode.value.move.stone } : null)
+const candidateMarkers = computed<CandidateMarker[]>(() => !candidatesVisible.value || preview.value ? [] : candidates.value.flatMap((candidate, index) => {
+  const position = positionFromCoordinate(candidate.move, tree.value.boardSize)
+  return position ? [{ ...position, rank: index + 1, percentage: Math.round((perspective.value === 'black' ? candidate.winrate : 1 - candidate.winrate) * 100) }] : []
 }))
+const territory = computed(() => territoryVisible.value && analysis.value && !preview.value ? ownershipTerritory(current.value.snapshot.board, analysis.value.ownership, analysis.value.ownershipStdev) : [])
+const previewStep = computed({ get: () => preview.value?.step ?? 0, set: (step: number) => { if (preview.value) preview.value = { ...preview.value, step } } })
+const ruleLabel = computed(() => tree.value.ruleSet === 'chinese' ? '中国规则' : tree.value.ruleSet === 'aga' ? 'AGA 规则' : '日韩规则')
 
-const lastMove = computed(() => {
-  if (!current.value.snapshot.lastMove || !current.value.move || current.value.move.pass) return null
-  return { ...current.value.snapshot.lastMove, stone: current.value.move.stone }
-})
-
-const lastMoveLabel = computed(() => current.value.move?.pass ? '停一手' : current.value.move?.coordinate ?? '尚未落子')
-
-const variationRows = computed(() => {
-  const rows: Array<{ id: string; depth: number; label: string; current: boolean }> = []
-  const visit = (nodeId: string, depth: number) => {
-    const node = tree.value.nodes[nodeId]
-    if (!node) return
-    const label = node.move?.pass
-      ? `${node.snapshot.moveNumber}. 停一手`
-      : node.move
-        ? `${node.snapshot.moveNumber}. ${node.move.coordinate}`
-        : '初始局面'
-    rows.push({ id: node.id, depth, label, current: node.id === tree.value.currentNodeId })
-    node.children.forEach((childId) => visit(childId, depth + 1))
-  }
-  visit(tree.value.rootId, 0)
-  return rows
-})
-
-function place(row: number, col: number) {
-  if (tree.value.mode === 'setup') {
-    research.editSetup(row, col, current.value.snapshot.board[row]?.[col] ? null : setupStone.value)
-    return
-  }
-  if (tree.value.mode === 'mark') {
-    research.markPoint(row, col)
+async function askConfirmation(title: string, text: string, label: string, run: () => void) {
+  restoreFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  confirmAction.value = { title, message: text, label, run }
+  await nextTick()
+  confirmDialog.value?.querySelector<HTMLElement>('button')?.focus()
+}
+function closeConfirmation() {
+  confirmAction.value = null
+  restoreFocus?.focus()
+}
+function acceptConfirmation() {
+  const run = confirmAction.value?.run
+  closeConfirmation()
+  run?.()
+}
+function replaceGuard(run: () => void) {
+  if (saving.value) return
+  if (tree.value.dirty) void askConfirmation('替换当前研究？', '当前研究尚未保存，继续将替换当前棋谱。', '继续', run)
+  else run()
+}
+function newDocument() {
+  replaceGuard(() => { ai.stop(); research.reset(); currentRecordId.value = null; documentMessage.value = ''; void router.replace({ name: 'research' }) })
+}
+function editPoint(row: number, col: number) {
+  if (preview.value) return
+  if (mode.value === 'mark') { research.markPoint(row, col); return }
+  if (mode.value === 'setup') {
+    if (current.value.snapshot.board[row]?.[col] === setupStone.value) return
+    const run = () => research.editSetup(row, col)
+    if (current.value.children.length) void askConfirmation('修改当前局面？', '摆子会移除当前节点之后的变化，可通过撤销恢复。', '修改局面', run)
+    else run()
     return
   }
   research.play(row, col)
 }
-
-function resetBoard() {
-  research.reset(tree.value.boardSize, tree.value.ruleSet, tree.value.komi)
+function changePlayer(stone: Stone) {
+  if (stone === current.value.snapshot.currentPlayer) return
+  const run = () => research.setPlayer(stone)
+  if (current.value.children.length) void askConfirmation('切换执子方？', '切换执子方会移除当前节点之后的变化，可通过撤销恢复。', '切换', run)
+  else run()
 }
-
+function deleteBranch() {
+  if (!current.value.parentId) return
+  void askConfirmation('删除当前变化？', '当前节点及其后续变化将被删除，可通过撤销恢复。', '删除变化', research.deleteVariation)
+}
+async function openFile(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  try {
+    const contents = await decodeSgfFile(file)
+    const next = importResearchSgf(contents)
+    replaceGuard(() => {
+      ai.stop(); research.openTree(next); currentRecordId.value = null; documentMessage.value = ''
+      void router.replace({ name: 'research' })
+    })
+  } catch (cause) { documentMessage.value = cause instanceof Error ? cause.message : String(cause) }
+  finally { if (fileInput.value) fileInput.value.value = '' }
+}
+async function refreshLibrary() {
+  libraryLoading.value = true
+  try { libraryRecords.value = (await listLibrary()).records }
+  catch (cause) { documentMessage.value = cause instanceof Error ? cause.message : String(cause) }
+  finally { libraryLoading.value = false }
+}
+function openRecord(record: LibraryRecord) {
+  try {
+    const next = importResearchSgf(record.sgf)
+    let id = next.rootId
+    for (const index of record.lastNodePath) { const child = next.nodes[id].children[index]; if (!child) break; id = child }
+    next.currentNodeId = id
+    replaceGuard(() => {
+      ai.stop(); research.openTree(next); currentRecordId.value = record.id; documentMessage.value = ''
+      void router.replace({ name: 'research', query: { record: record.id } })
+    })
+  } catch (cause) { documentMessage.value = cause instanceof Error ? cause.message : String(cause) }
+}
+async function saveDocument() {
+  if (saving.value) return
+  saving.value = true
+  const snapshot = tree.value
+  try {
+    // The library boundary stores SGF komi in points; the research model uses the displayed Chinese zi value.
+    const compatibleTree = {
+      ...snapshot, komi: snapshot.ruleSet === 'chinese' ? snapshot.komi * 2 : snapshot.komi,
+      nodes: Object.fromEntries(Object.values(snapshot.nodes).map((node) => [node.id, { ...node, sgfProperties: { ...node.properties, ...(node.setup ? { PL: [node.snapshot.currentPlayer === 'black' ? 'B' : 'W'] } : {}) } }])),
+    }
+    const record = await saveResearchRecord(currentRecordId.value, compatibleTree, { title: snapshot.title, black: snapshot.blackName, white: snapshot.whiteName })
+    if (tree.value.rootId !== snapshot.rootId) return
+    currentRecordId.value = record.id
+    research.markSaved(snapshot)
+    documentMessage.value = '已保存到棋谱库'
+    await refreshLibrary()
+  } catch (cause) { documentMessage.value = cause instanceof Error ? cause.message : String(cause) }
+  finally { saving.value = false }
+}
+async function exportDocument() {
+  try {
+    const record = { title: tree.value.title, sgf: research.exportSgf() } as LibraryRecord
+    const saved = await downloadRecords([record])
+    if (saved) documentMessage.value = 'SGF 已导出'
+  } catch (cause) { documentMessage.value = cause instanceof Error ? cause.message : String(cause) }
+}
+function handleKey(event: KeyboardEvent) {
+  if (confirmAction.value) {
+    if (event.key === 'Escape') { event.preventDefault(); closeConfirmation() }
+    if (event.key === 'Tab' && confirmDialog.value) {
+      const buttons = [...confirmDialog.value.querySelectorAll<HTMLElement>('button')]
+      const first = buttons[0], last = buttons.at(-1)
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+    }
+    return
+  }
+  if (event.defaultPrevented) return
+  if (event.ctrlKey || event.metaKey) {
+    if (event.key.toLowerCase() === 's') { event.preventDefault(); void saveDocument() }
+    const target = event.target as HTMLElement
+    if (target.closest('input, textarea, select, [contenteditable="true"]')) return
+    if (event.key.toLowerCase() === 'z') { event.preventDefault(); preview.value = null; event.shiftKey ? research.redo() : research.undo() }
+    return
+  }
+  const target = event.target as HTMLElement
+  if (target.closest('input, textarea, select, [contenteditable="true"]')) return
+  if (event.key === 'Escape') { preview.value = null; return }
+  if (preview.value) return
+  if (event.key === 'ArrowLeft') { event.preventDefault(); research.goBack() }
+  if (event.key === 'ArrowRight') { event.preventDefault(); research.goForward() }
+  if (event.key === 'Home') { event.preventDefault(); research.goFirst() }
+  if (event.key === 'End') { event.preventDefault(); research.goLast() }
+}
+function refreshTheme() { boardStyle.value = loadBoardStyle() }
+watch([() => tree.value.title, () => tree.value.dirty, () => current.value.id], () => {
+  window.dispatchEvent(new CustomEvent('game-header-summary', { detail: {
+    primary: '研究盘', secondary: `${tree.value.title} · 第 ${current.value.snapshot.moveNumber} 手`,
+    status: tree.value.dirty ? '未保存' : '研究中', statusTone: tree.value.dirty ? 'idle' : 'ready',
+  } }))
+}, { immediate: true })
+watch(libraryVisible, (visible) => { if (visible) void refreshLibrary() })
+watch(() => preview.value?.move, async (move) => {
+  if (!move || window.innerWidth > 980) return
+  await nextTick()
+  boardStage.value?.scrollIntoView({ block: 'start' })
+})
+watch(() => route.query.record, async (id) => {
+  if (typeof id !== 'string' || id === currentRecordId.value) return
+  await refreshLibrary()
+  const record = libraryRecords.value.find((item) => item.id === id && !item.deletedAt)
+  if (record) openRecord(record)
+  else documentMessage.value = '找不到这份棋谱'
+}, { immediate: true })
+onMounted(() => { window.addEventListener('keydown', handleKey); window.addEventListener('focus', refreshTheme) })
+onBeforeUnmount(() => { window.removeEventListener('keydown', handleKey); window.removeEventListener('focus', refreshTheme) })
 </script>
 
 <template>
-  <main class="workspace research-workspace">
-    <section class="game-area research-game-area">
-      <header class="research-context-bar">
-        <div class="research-context-copy">
-          <button class="research-back-button" type="button" aria-label="返回主菜单" title="返回主菜单" @click="router.push({ name: 'mode-select' })">
-            <ArrowLeft :size="17" />
-          </button>
-          <div>
-            <span>研究盘</span>
-            <strong>自由研究</strong>
+  <main class="research-workbench">
+    <header class="document-toolbar">
+      <button v-if="currentRecordId" class="icon-button" type="button" title="返回棋谱库" aria-label="返回棋谱库" :disabled="saving" @click="router.push({ name: 'library' })"><ArrowLeft :size="17" /></button>
+      <button class="icon-button" type="button" title="棋谱库" aria-label="棋谱库" :aria-expanded="libraryVisible" :class="{ selected: libraryVisible }" @click="libraryVisible = !libraryVisible"><Library :size="17" /></button>
+      <div class="document-name"><input aria-label="棋谱名称" :value="tree.title" maxlength="120" @change="research.setTitle(($event.target as HTMLInputElement).value)" /><span>{{ tree.dirty ? '未保存' : currentRecordId ? '已保存' : '本地草稿' }}</span></div>
+      <span class="document-rules">{{ tree.boardSize }} 路 · {{ ruleLabel }} · 贴 {{ tree.komi }}{{ tree.ruleSet === 'chinese' ? '子' : '目' }}</span>
+      <div class="document-actions">
+        <button class="icon-button" type="button" title="新建研究" aria-label="新建研究" :disabled="saving" @click="newDocument"><FilePlus2 :size="16" /></button>
+        <button class="icon-button" type="button" title="打开 SGF" aria-label="打开 SGF" :disabled="saving" @click="fileInput?.click()"><FolderOpen :size="16" /></button>
+        <button class="icon-button" type="button" title="导出 SGF" aria-label="导出 SGF" @click="exportDocument"><Download :size="16" /></button>
+        <button class="save-button" type="button" :disabled="saving" @click="saveDocument"><Save :size="15" /><span>{{ saving ? '保存中' : '保存' }}</span></button>
+      </div>
+      <input ref="fileInput" class="file-input" type="file" accept=".sgf,application/x-go-sgf" aria-label="选择 SGF 文件" @change="openFile" />
+    </header>
+    <div v-if="documentMessage || message" class="document-feedback" role="status"><span>{{ message || documentMessage }}</span><button class="icon-button" type="button" aria-label="关闭提示" title="关闭提示" @click="documentMessage = ''; message = ''"><X :size="14" /></button></div>
+    <div class="research-layout" :class="{ 'library-open': libraryVisible }">
+      <aside v-if="libraryVisible" class="research-library" aria-label="本地棋谱">
+        <div class="library-heading"><h2>棋谱库</h2><button class="icon-button" type="button" aria-label="收起棋谱库" title="收起棋谱库" @click="libraryVisible = false"><X :size="15" /></button></div>
+        <input v-model="libraryQuery" type="search" aria-label="搜索棋谱" placeholder="搜索棋谱" />
+        <div class="library-records"><button v-for="record in filteredRecords" :key="record.id" type="button" :class="{ selected: record.id === currentRecordId }" @click="openRecord(record)"><strong>{{ record.title }}</strong><span>{{ record.black || '黑方' }} · {{ record.white || '白方' }}</span><small>{{ record.moves }} 手 · {{ record.date || '未设置日期' }}</small></button><div v-if="!filteredRecords.length" class="library-empty">{{ libraryLoading ? '正在读取棋谱…' : libraryQuery ? '没有匹配的棋谱' : '暂无棋谱' }}</div></div>
+      </aside>
+      <section class="research-board-area" aria-label="研究棋盘">
+        <ResearchModeToolbar :mode="mode" :setup-stone="setupStone" :mark-type="markType" :current-player="current.snapshot.currentPlayer" :locked="Boolean(preview)" @update:mode="research.setMode" @update:setup-stone="research.setSetupStone" @update:mark-type="research.setMarkType" @update:current-player="changePlayer" @clear-marks="research.clearMarks">
+          <div class="board-display-tools" role="group" aria-label="棋盘显示">
+            <button class="icon-button" type="button" title="显示手数" aria-label="显示手数" :aria-pressed="moveNumbersVisible" :class="{ selected: moveNumbersVisible }" @click="moveNumbersVisible = !moveNumbersVisible"><Hash :size="16" /></button>
+            <button class="icon-button" type="button" title="显示候选落点" aria-label="显示候选落点" :disabled="!analysis || Boolean(preview)" :aria-pressed="candidatesVisible" :class="{ selected: candidatesVisible && analysis && !preview }" @click="candidatesVisible = !candidatesVisible"><Target :size="16" /></button>
+            <button class="icon-button" type="button" title="显示形势预测" aria-label="显示形势预测" :disabled="!analysis || Boolean(preview)" :aria-pressed="territoryVisible" :class="{ selected: territoryVisible && analysis && !preview }" @click="territoryVisible = !territoryVisible"><Grid2X2 :size="16" /></button>
           </div>
+        </ResearchModeToolbar>
+        <div ref="boardStage" class="board-stage research-board-stage" :class="{ 'is-previewing': preview }">
+          <div v-if="preview" class="preview-caption" role="status"><GitBranch :size="14" />AI 预览 · {{ preview.move === 'pass' ? '停一手' : preview.move }} · {{ preview.step }} 手</div>
+          <GoBoard :board="displayNode.snapshot.board" :current-player="displayNode.snapshot.currentPlayer" :last-move="lastMove" :candidates="candidateMarkers" :territory="territory" territory-mode="ai" :show-star-points="true" :show-coordinates="true" :dead-stones="[]" :move-numbers="moveNumbers" :show-move-numbers="moveNumbersVisible || Boolean(preview)" :board-style="boardStyle" :disabled="Boolean(preview) || Boolean(confirmAction)" :busy="false" :marks="preview ? [] : current.marks" @place="editPoint" />
         </div>
-        <div class="research-header-actions">
-          <button class="research-icon-button" type="button" :disabled="!canGoBack" aria-label="回到上一个局面" title="回到上一个局面" @click="research.goBack"><ChevronLeft :size="16" /></button>
-          <button class="research-icon-button" type="button" :disabled="!canGoForward" aria-label="进入下一个局面" title="进入下一个局面" @click="research.goForward"><ChevronRight :size="16" /></button>
-          <button class="research-toolbar-button" type="button" @click="research.pass"><CircleDot :size="16" />停一手</button>
-          <button class="research-toolbar-button" type="button" @click="resetBoard"><RotateCcw :size="16" />清空棋盘</button>
-          <button class="research-toolbar-button primary" type="button" disabled><BrainCircuit :size="16" />获取分析</button>
+        <div v-if="preview" class="preview-controls">
+          <button class="icon-button" type="button" title="退出 AI 预览" aria-label="退出 AI 预览" @click="preview = null"><X :size="16" /></button>
+          <span>AI 预览</span><input v-model.number="previewStep" type="range" min="1" :max="preview.coordinates.length" aria-label="预览变化手数" /><span>{{ preview.step }} / {{ preview.coordinates.length }}</span>
+          <button class="save-button" type="button" @click="ai.commitPreview"><GitBranch :size="15" />加入变化</button>
         </div>
-      </header>
-
-      <PlayerHeader
-        black-name="研究黑方"
-        white-name="研究白方"
-        :move-number="current.snapshot.moveNumber"
-        :current-player="current.snapshot.currentPlayer"
-        :last-move-label="lastMoveLabel"
-      />
-
-      <div class="research-toolbars">
-        <div class="mode-switch" aria-label="研究模式">
-          <button type="button" :class="{ selected: tree.mode === 'play' }" @click="research.setMode('play')">落子</button>
-          <button type="button" :class="{ selected: tree.mode === 'setup' }" @click="research.setMode('setup')">摆子</button>
-          <button type="button" :class="{ selected: tree.mode === 'mark' }" @click="research.setMode('mark')">标记</button>
-        </div>
-        <div v-if="tree.mode === 'setup'" class="mode-options">
-          <button type="button" :class="{ selected: setupStone === 'black' }" @click="research.setSetupStone('black')">黑子</button>
-          <button type="button" :class="{ selected: setupStone === 'white' }" @click="research.setSetupStone('white')">白子</button>
-        </div>
-        <div v-if="tree.mode === 'mark'" class="mode-options">
-          <button type="button" :class="{ selected: markType === 'circle' }" @click="research.setMarkType('circle')">圆</button>
-          <button type="button" :class="{ selected: markType === 'triangle' }" @click="research.setMarkType('triangle')">三角</button>
-          <button type="button" :class="{ selected: markType === 'square' }" @click="research.setMarkType('square')">方</button>
-          <button type="button" :class="{ selected: markType === 'cross' }" @click="research.setMarkType('cross')">叉</button>
-          <button class="icon-tool-button" type="button" aria-label="清除当前局面标记" title="清除当前局面标记" @click="research.clearMarks"><Eraser :size="14" /></button>
-        </div>
-      </div>
-
-      <div class="board-stage research-board-stage">
-          <GoBoard
-            :board="current.snapshot.board"
-            :current-player="current.snapshot.currentPlayer"
-            :last-move="lastMove"
-            :candidates="[]"
-            :territory="[]"
-            territory-mode="current"
-            :show-star-points="true"
-            :show-coordinates="true"
-            :dead-stones="[]"
-            :move-numbers="moveNumbers"
-            :show-move-numbers="true"
-            :board-style="boardStyle"
-            :disabled="false"
-            :busy="false"
-            :marks="current.marks"
-            @place="place"
-          />
-      </div>
-
-      <div class="match-action-bar research-action-bar">
-        <div class="match-action-group" aria-label="研究操作">
-          <button class="match-action" type="button" :disabled="!canGoBack" aria-label="上一个局面" title="上一个局面" @click="research.goBack"><ChevronLeft :size="16" /><span>上一个</span></button>
-          <button class="match-action" type="button" :disabled="!canGoForward" aria-label="下一个局面" title="下一个局面" @click="research.goForward"><ChevronRight :size="16" /><span>下一个</span></button>
-          <button class="match-action" type="button" @click="research.pass"><CircleDot :size="16" /><span>停一手</span></button>
-          <button class="match-action" type="button" @click="resetBoard"><RotateCcw :size="16" /><span>重新开始</span></button>
-        </div>
-      </div>
-    </section>
-
-    <aside class="game-sidebar research-sidebar" aria-label="研究信息">
-      <div class="sidebar-scroll">
-        <section class="research-control-section">
-          <div class="sidebar-section-heading">
-            <div><span class="sidebar-kicker">研究工具</span><strong>当前模式</strong></div>
-            <span class="mode-status">{{ tree.mode === 'play' ? '落子' : tree.mode === 'setup' ? '摆子' : '标记' }}</span>
+        <footer class="research-navigation">
+          <div class="navigation-top">
+            <div class="history-tools" role="group" aria-label="编辑历史"><button class="icon-button" type="button" title="撤销编辑" aria-label="撤销编辑" :disabled="!canUndo || Boolean(preview)" @click="research.undo"><Undo2 :size="16" /></button><button class="icon-button" type="button" title="重做编辑" aria-label="重做编辑" :disabled="!canRedo || Boolean(preview)" @click="research.redo"><Redo2 :size="16" /></button></div>
+            <div class="move-navigation" role="group" aria-label="棋谱导航">
+              <button class="icon-button" type="button" title="初始局面" aria-label="初始局面" :disabled="!canGoBack || Boolean(preview)" @click="research.goFirst"><ChevronsLeft :size="18" /></button>
+              <button class="icon-button" type="button" title="上一手" aria-label="上一手" :disabled="!canGoBack || Boolean(preview)" @click="research.goBack"><ChevronLeft :size="18" /></button>
+              <label class="move-position"><input type="number" :value="lineIndex" min="0" :max="line.length - 1" :disabled="Boolean(preview)" aria-label="跳转节点" @change="research.goToIndex(Number(($event.target as HTMLInputElement).value))" /><span>/ {{ line.length - 1 }}</span></label>
+              <button class="icon-button" type="button" title="下一手" aria-label="下一手" :disabled="!canGoForward || Boolean(preview)" @click="research.goForward"><ChevronRight :size="18" /></button>
+              <button class="icon-button" type="button" title="变化末尾" aria-label="变化末尾" :disabled="!canGoForward || Boolean(preview)" @click="research.goLast"><ChevronsRight :size="18" /></button>
+            </div>
+            <button class="pass-button" type="button" :disabled="Boolean(preview) || mode !== 'play'" @click="research.pass"><Pause :size="14" />停一手</button>
           </div>
-          <div class="research-control-row"><span>当前手数</span><strong>{{ current.snapshot.moveNumber }}</strong></div>
-          <div class="research-control-row"><span>当前执子</span><strong>{{ current.snapshot.currentPlayer === 'black' ? '黑方' : '白方' }}</strong></div>
-          <div v-if="message" class="research-feedback" role="status">{{ message }}</div>
+          <input class="move-timeline" type="range" :value="lineIndex" min="0" :max="Math.max(1, line.length - 1)" :disabled="line.length === 1 || Boolean(preview)" aria-label="棋谱进度" @input="research.goToIndex(Number(($event.target as HTMLInputElement).value))" />
+          <div class="board-status"><span>{{ onMainLine ? '主线' : '变化' }} · 第 {{ current.snapshot.moveNumber }} 手{{ current.move ? ` · ${current.move.pass ? '停一手' : current.move.coordinate}` : '' }}</span><span>提子 黑 {{ current.snapshot.capturedByBlack }} / 白 {{ current.snapshot.capturedByWhite }}</span></div>
+        </footer>
+      </section>
+      <aside class="research-inspector" aria-label="研究信息">
+        <div class="inspector-analysis"><ResearchEvaluation v-model:perspective="perspective" :analysis="analysis" :candidates="candidates" :history="history" :status="status" :error="error" :live="live" :mode="analysisMode" :preview-move="preview?.move" @request="ai.request" @stop="live = false; ai.stop()" @update:live="live = $event" @update:mode="analysisMode = $event" @preview="ai.showPreview" /></div>
+        <section class="inspector-tree" aria-label="棋谱变化">
+          <div class="section-heading"><h2><GitBranch :size="15" />变化树</h2><span>{{ Object.keys(tree.nodes).length }} 节点</span><div class="section-actions"><button class="icon-button" type="button" title="设为主线" aria-label="设为主线" :disabled="onMainLine || Boolean(preview)" @click="research.promoteVariation"><ArrowUpToLine :size="15" /></button><button class="icon-button" type="button" title="删除当前变化" aria-label="删除当前变化" :disabled="!current.parentId || Boolean(preview)" @click="deleteBranch"><Trash2 :size="15" /></button></div></div>
+          <VariationTree :graph="graph" @select="preview = null; research.selectNode($event)" />
         </section>
-
-        <section class="research-control-section variation-section">
-          <div class="sidebar-section-heading"><div><span class="sidebar-kicker">变化树</span><strong>研究节点</strong></div><span class="node-count">{{ variationRows.length }}</span></div>
-          <div v-if="variationRows.length === 1" class="empty-state compact">
-            <Sparkles :size="18" />
-            <strong>等待第一手</strong>
-            <span>每一手都会保留为可返回的研究节点。</span>
-          </div>
-          <div v-else class="variation-tree" aria-label="变化树">
-            <button
-              v-for="row in variationRows"
-              :key="row.id"
-              class="variation-node"
-              :class="{ selected: row.current }"
-              :style="{ paddingLeft: `${10 + row.depth * 14}px` }"
-              type="button"
-              @click="research.selectNode(row.id)"
-            >
-              <span class="variation-dot" />
-              <span>{{ row.label }}</span>
-            </button>
-          </div>
-        </section>
-
-        <section class="research-control-section analysis-section">
-          <div class="sidebar-section-heading"><div><span class="sidebar-kicker">局面分析</span><strong>AI 研究</strong></div><BrainCircuit :size="16" /></div>
-          <div class="analysis-placeholder"><span>{{ message || '等待分析' }}</span><small>当前局面分析、候选点和胜率曲线将在下一步接入。</small></div>
-          <button class="analysis-command" type="button" disabled><BrainCircuit :size="15" />获取分析</button>
-        </section>
-      </div>
-    </aside>
+        <section class="inspector-notes" aria-label="节点备注"><div class="section-heading"><h2><MessageSquare :size="15" />节点备注</h2><span>第 {{ current.snapshot.moveNumber }} 手</span></div><textarea :value="current.comment" rows="3" aria-label="当前节点备注" placeholder="暂无备注" @input="research.setComment(($event.target as HTMLTextAreaElement).value)" /></section>
+      </aside>
+    </div>
+    <div v-if="confirmAction" class="research-dialog-backdrop" @click.self="closeConfirmation"><section ref="confirmDialog" class="research-dialog" role="dialog" aria-modal="true" aria-labelledby="research-confirm-title" aria-describedby="research-confirm-message"><h2 id="research-confirm-title">{{ confirmAction.title }}</h2><p id="research-confirm-message">{{ confirmAction.message }}</p><div><button class="dialog-button" type="button" @click="closeConfirmation">取消</button><button class="save-button" type="button" @click="acceptConfirmation">{{ confirmAction.label }}</button></div></section></div>
   </main>
 </template>
 
 <style scoped>
-.research-workspace { grid-template-columns: minmax(600px, 1fr) 360px; }
-.research-game-area { grid-template-rows: 58px 72px 44px minmax(0, 1fr) auto; background: var(--shell); }
-.research-context-bar { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 16px; padding: 0 18px; border-bottom: 1px solid rgba(225, 225, 225, .72); background: rgba(255, 255, 255, .42); backdrop-filter: blur(2px); }
-.research-context-copy, .research-header-actions { display: flex; min-width: 0; align-items: center; gap: 10px; }
-.research-context-copy > div { display: grid; min-width: 0; gap: 2px; }
-.research-context-copy span, .sidebar-kicker { color: var(--muted); font-size: 10px; }
-.research-context-copy strong { color: var(--text); font-size: 14px; }
-.research-back-button, .research-icon-button { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: rgba(255, 255, 255, .64); }
-.research-back-button:hover, .research-icon-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft); }
-.research-icon-button:disabled { cursor: not-allowed; opacity: .42; }
-.research-toolbar-button { display: inline-flex; min-height: 34px; align-items: center; gap: 7px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: rgba(255, 255, 255, .64); font: inherit; font-size: 11px; }
-.research-toolbar-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft); }
-.research-toolbar-button.primary { border-color: var(--accent); color: #fff; background: var(--accent); }
-.research-toolbar-button:disabled { cursor: not-allowed; opacity: .46; }
-.research-toolbars { display: flex; min-width: 0; min-height: 44px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 24px; border-bottom: 1px solid var(--border); background: rgba(255, 255, 255, .62); }
-.mode-switch, .mode-options { display: flex; align-items: center; gap: 4px; }
-.mode-switch button, .mode-options button { min-height: 28px; padding: 0 10px; border: 1px solid transparent; border-radius: 5px; color: var(--muted); background: transparent; font: inherit; font-size: 11px; }
-.mode-switch button:hover, .mode-options button:hover { color: var(--text); background: var(--surface-muted); }
-.mode-switch button.selected, .mode-options button.selected { border-color: rgba(var(--accent-rgb), .2); color: var(--accent-strong); background: var(--accent-soft); font-weight: 700; }
-.mode-options { padding-left: 10px; border-left: 1px solid var(--border); }
-.icon-tool-button { display: grid; width: 30px; padding: 0 !important; place-items: center; }
-.research-board-stage { padding: 22px 28px; background: var(--surface-muted); }
-.research-action-bar { padding: 0 24px 16px; background: var(--surface-muted); }
-.research-sidebar { min-width: 320px; max-width: 420px; border-left: 1px solid var(--border); background: var(--surface); }
-.sidebar-scroll { min-height: 0; flex: 1 1 auto; overflow: auto; padding: 16px; }
-.research-control-section { padding: 0 0 16px; border-bottom: 1px solid var(--border); }
-.research-control-section + .research-control-section { padding-top: 16px; }
-.sidebar-section-heading { display: flex; min-height: 30px; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.sidebar-section-heading > div { display: grid; min-width: 0; gap: 3px; }
-.sidebar-section-heading strong { color: var(--text); font-size: 13px; }
-.sidebar-section-heading > svg { color: var(--accent); }
-.mode-status, .node-count { color: var(--accent-strong); font-size: 11px; font-weight: 700; }
-.research-control-row { display: flex; min-height: 34px; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 11px; }
-.research-control-row strong { color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; }
-.research-feedback { margin-top: 8px; padding: 9px 10px; border: 1px solid rgba(232, 17, 35, .2); border-radius: 6px; color: var(--danger); background: var(--danger-soft); font-size: 11px; line-height: 1.45; }
-.empty-state { display: grid; justify-items: start; gap: 8px; padding: 14px; border: 1px dashed var(--border); border-radius: 6px; color: var(--muted); background: var(--surface-muted); }
-.empty-state svg { color: var(--accent); }.empty-state strong { color: var(--text); font-size: 12px; }.empty-state span { font-size: 11px; line-height: 1.5; }
-.variation-tree { display: grid; max-height: 300px; gap: 2px; overflow: auto; }
-.variation-node { display: flex; min-height: 32px; align-items: center; gap: 8px; border: 0; color: var(--muted); background: transparent; font: inherit; font-size: 11px; text-align: left; }
-.variation-node:hover { color: var(--text); background: var(--surface-muted); }.variation-node.selected { color: var(--accent-strong); background: var(--accent-soft); font-weight: 700; }.variation-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: currentColor; opacity: .65; }
-.analysis-placeholder { display: grid; gap: 5px; padding: 2px 0 12px; color: var(--text-subtle); font-size: 12px; }.analysis-placeholder small { font-size: 11px; line-height: 1.5; }
-.analysis-command { display: inline-flex; min-height: 34px; align-items: center; justify-content: center; gap: 7px; width: 100%; border: 1px solid var(--accent); border-radius: 6px; color: #fff; background: var(--accent); font: inherit; font-size: 11px; font-weight: 600; }.analysis-command:disabled { cursor: not-allowed; opacity: .48; }
-@media (max-width: 980px) { .research-workspace { display: block; overflow-y: auto; }.research-game-area { min-height: 780px; }.research-sidebar { max-width: none; border-top: 1px solid var(--border); border-left: 0; }.research-toolbars { padding-inline: 18px; }.research-board-stage { padding: 22px 24px; } }
-@media (max-width: 760px) { .research-game-area { min-height: auto; grid-template-rows: auto auto auto minmax(420px, auto) auto; }.research-context-bar { min-height: 56px; padding-inline: 14px; }.research-header-actions .research-toolbar-button:not(.primary) { display: none; }.research-context-copy strong { font-size: 13px; }.research-toolbars { padding-inline: 12px; overflow-x: auto; }.research-board-stage { min-height: 440px; padding: 12px; }.research-action-bar { padding: 0 12px 16px; }.research-toolbar-button.primary { padding-inline: 9px; }.research-toolbar-button.primary svg { display: none; } }
-@media (max-width: 480px) { .research-header-actions { gap: 5px; }.research-header-actions .research-icon-button { width: 30px; height: 30px; }.research-header-actions .research-toolbar-button.primary { font-size: 10px; }.sidebar-scroll { padding: 14px 12px; } }
+.research-workbench { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; color: var(--text); overflow: hidden; background: var(--shell); background-image: linear-gradient(rgba(243,242,241,.22), rgba(243,242,241,.22)), url('/home-background.png'); background-position: center; background-size: cover; }
+.document-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-height: 52px; padding: 8px 18px; border-bottom: 1px solid var(--border); background: rgba(243,242,241,.2); backdrop-filter: blur(2px); }
+.icon-button { display: inline-flex; justify-content: center; align-items: center; flex: 0 0 32px; width: 32px; height: 32px; padding: 0; border: 1px solid transparent; border-radius: 5px; color: var(--muted); background: transparent; }
+.icon-button:hover:not(:disabled) { color: var(--accent-strong); border-color: var(--accent-16); background: rgba(255,255,255,.72); }.icon-button.selected { color: var(--accent-strong); background: var(--accent-soft); border-color: var(--accent-16); }.icon-button:disabled { opacity: .35; }
+.document-name { display: flex; align-items: center; gap: 10px; min-width: 0; }.document-name input { width: 180px; height: 30px; padding: 3px 6px; border-color: transparent; background: transparent; font-size: 13px; font-weight: 600; }.document-name > span { flex-shrink: 0; color: var(--muted); font-size: 10px; }.document-rules { color: var(--muted); font-size: 11px; }.document-actions { display: flex; gap: 3px; align-items: center; margin-left: auto; }.save-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 11px; border: 1px solid var(--accent); border-radius: 5px; color: var(--surface); background: var(--accent); font-size: 12px; }.save-button:hover:not(:disabled) { background: var(--accent-strong); }.save-button:disabled { opacity: .5; }.file-input { display: none; }
+.document-feedback { display: flex; align-items: center; justify-content: space-between; min-height: 32px; padding: 0 18px; color: var(--accent-strong); background: var(--accent-soft); font-size: 12px; }.document-feedback > span { overflow-wrap: anywhere; }
+.research-layout { display: grid; grid-template-columns: minmax(0,1fr) 360px; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }.research-layout.library-open { grid-template-columns: 210px minmax(0,1fr) 360px; }
+.research-board-area { display: grid; grid-template-rows: auto minmax(0,1fr) auto auto; min-width: 0; min-height: 0; }
+.board-display-tools { display: flex; align-items: center; gap: 2px; margin-left: auto; }.research-board-stage { min-height: 0; padding: 18px 24px; overflow: hidden; container-type: size; background: rgba(243,242,241,.2); backdrop-filter: blur(2px); }.research-board-stage :deep(.board-host) { width: min(100cqw,100cqh) !important; height: min(100cqw,100cqh) !important; min-width: 0; max-width: 100%; max-height: 100%; box-shadow: var(--shadow-md); }
+.research-board-stage.is-previewing { padding-top: 38px; }
+.preview-caption { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--accent-16); border-radius: 4px; color: var(--accent-strong); background: var(--surface); font-size: 11px; white-space: nowrap; z-index: 1; }
+.preview-controls { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 18px; border-top: 1px solid var(--border); background: var(--accent-soft); font-size: 11px; }.preview-controls input { flex: 1; min-width: 40px; accent-color: var(--accent); }.preview-controls > span { white-space: nowrap; }
+.research-navigation { padding: 10px 24px 12px; border-top: 1px solid var(--border); background: rgba(243,242,241,.2); backdrop-filter: blur(2px); }.navigation-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }.history-tools, .move-navigation { display: flex; align-items: center; gap: 3px; }.move-position { display: flex; align-items: center; gap: 4px; min-width: 88px; justify-content: center; font-size: 11px; color: var(--muted); }.move-position input { width: 48px; height: 28px; padding: 2px 4px; font-size: 12px; text-align: center; }.pass-button { display: flex; align-items: center; justify-content: center; gap: 5px; min-height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: rgba(255,255,255,.72); font-size: 11px; }.pass-button:disabled { opacity: .4; }.move-timeline { display: block; width: 100%; height: 18px; margin: 6px 0; accent-color: var(--accent); }.board-status { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 10px; }
+.research-inspector { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--border); overflow-y: auto; background: rgba(243,242,241,.2); backdrop-filter: blur(2px); scrollbar-width: thin; }.inspector-analysis { padding: 16px 18px 12px; border-bottom: 1px solid var(--border); }.inspector-tree { display: flex; flex-direction: column; flex: 1; min-height: 190px; padding: 12px 18px; border-bottom: 1px solid var(--border); }.section-heading { display: flex; align-items: center; gap: 8px; min-height: 32px; margin-bottom: 8px; }.section-heading h2 { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; font-weight: 600; }.section-heading h2 svg { color: var(--muted); }.section-heading > span { color: var(--muted); font-size: 10px; margin-left: auto; }.section-actions { display: flex; gap: 2px; }.section-actions .icon-button { width: 28px; height: 28px; flex-basis: 28px; }.inspector-tree :deep(.variation-viewport) { flex: 1; max-height: 250px; }.inspector-notes { padding: 10px 18px 16px; }.inspector-notes .section-heading { margin-bottom: 4px; }.inspector-notes textarea { display: block; width: 100%; min-height: 76px; max-height: 220px; resize: vertical; padding: 8px 10px; font: inherit; font-size: 12px; line-height: 1.5; }
+.research-library { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 12px; border-right: 1px solid var(--border); background: rgba(243,242,241,.6); backdrop-filter: blur(2px); }.library-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }.library-heading h2 { margin: 0; font-size: 13px; }.research-library > input { width: 100%; min-height: 32px; padding: 0 8px; font-size: 12px; border: 1px solid var(--border); border-radius: 5px; }.library-records { flex: 1; min-height: 0; overflow: auto; margin-top: 10px; }.library-records button { display: grid; width: 100%; gap: 6px; padding: 12px 8px; border: 0; border-bottom: 1px solid var(--border); color: var(--text); background: transparent; text-align: left; overflow-wrap: anywhere; }.library-records button:hover, .library-records button.selected { background: var(--accent-soft); }.library-records strong { font-size: 12px; font-weight: 600; }.library-records span, .library-records small { color: var(--muted); font-size: 10px; }.library-empty { padding: 24px 8px; text-align: center; font-size: 12px; color: var(--muted); }
+.research-dialog-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: rgba(50,49,48,.3); }.research-dialog { width: min(380px,100%); padding: 22px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-md); }.research-dialog h2 { margin: 0 0 12px; font-size: 16px; }.research-dialog p { color: var(--muted); font-size: 13px; line-height: 1.6; }.research-dialog > div { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }.dialog-button { min-height: 32px; padding: 0 14px; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--surface); font-size: 12px; }
+@media (min-width: 981px) and (max-width: 1240px) { .research-layout.library-open { grid-template-columns: minmax(0,1fr) 340px; position: relative; }.library-open .research-library { position: absolute; left: 0; top: 0; bottom: 0; width: 220px; z-index: 3; background: var(--shell); box-shadow: var(--shadow-md); }.research-layout { grid-template-columns: minmax(0,1fr) 340px; }.document-rules { display: none; } }
+@media (max-width: 980px) { .research-layout, .research-layout.library-open { display: block; overflow-y: auto; position: relative; }.research-board-area { height: 720px; min-height: 0; }.research-inspector { display: grid; grid-template-columns: 1fr 1fr; overflow: visible; border-left: 0; border-top: 1px solid var(--border); }.inspector-analysis { grid-row: span 2; border-right: 1px solid var(--border); border-bottom: 0; }.inspector-tree { min-height: 220px; }.research-library { position: absolute; top: 0; left: 0; bottom: 0; width: 240px; z-index: 3; background: var(--shell); box-shadow: var(--shadow-md); }.document-rules { display: none; } }
+@media (max-width: 600px) { .document-toolbar { padding: 8px 10px; gap: 4px; }.document-name { flex: 1; gap: 4px; }.document-name input { width: 132px; }.document-name > span { font-size: 9px; }.document-actions { gap: 0; }.document-actions .icon-button { width: 28px; flex-basis: 28px; }.save-button { padding: 0 8px; }.document-actions .save-button span { display: none; }.research-board-area { height: auto; grid-template-rows: auto auto auto auto; }.research-board-stage { height: auto; min-height: 0; aspect-ratio: 1; padding: 14px 12px; }.research-inspector { display: flex; }.inspector-analysis { border-right: 0; border-bottom: 1px solid var(--border); }.inspector-tree { min-height: 230px; flex: none; }.research-navigation { padding: 8px 12px 12px; }.navigation-top { flex-wrap: wrap; gap: 6px; }.history-tools { order: 2; }.move-navigation { order: 1; flex: 1 0 100%; justify-content: center; }.pass-button { order: 3; margin-left: auto; }.preview-controls { flex-wrap: wrap; padding: 6px 12px; }.preview-controls > span:first-of-type { display: none; }.board-display-tools { margin-left: auto; }.document-feedback { padding-inline: 12px; }.inspector-notes textarea { font-size: 16px; } }
 </style>

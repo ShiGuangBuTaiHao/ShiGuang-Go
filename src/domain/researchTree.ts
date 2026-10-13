@@ -1,90 +1,22 @@
-import { applyMove, boardHash, cloneBoard, coordinateLabel, createBoard } from './go'
+import SabakiBoard from '@sabaki/go-board'
+import { boardHash, cloneBoard, coordinateLabel, createBoard, positionFromCoordinate } from './go'
 import type { RuleSet } from './gameSetup'
-import type { Board, Stone } from '../types/game'
-import type {
-  BoardMark,
-  BoardMarkType,
-  ResearchMove,
-  ResearchNode,
-  ResearchSnapshot,
-  ResearchTree,
-} from '../types/research'
+import type { BoardMark, BoardMarkType, ResearchNode, ResearchSnapshot, ResearchTree, VariationGraph } from '../types/research'
+import type { Stone } from '../types/game'
 
-function nextPlayer(stone: Stone): Stone {
-  return stone === 'black' ? 'white' : 'black'
+export function researchId(prefix = 'node'): string {
+  return `${prefix}-${crypto.randomUUID()}`
 }
 
-function makeId(prefix: string): string {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `${prefix}-${crypto.randomUUID()}`
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
-function cloneSnapshot(snapshot: ResearchSnapshot): ResearchSnapshot {
+export function createResearchTree(boardSize = 19, ruleSet: RuleSet = 'chinese', komi = 3.75): ResearchTree {
+  const id = researchId('root')
   return {
-    board: cloneBoard(snapshot.board),
-    currentPlayer: snapshot.currentPlayer,
-    moveNumber: snapshot.moveNumber,
-    lastMove: snapshot.lastMove ? { ...snapshot.lastMove } : null,
-    capturedByBlack: snapshot.capturedByBlack,
-    capturedByWhite: snapshot.capturedByWhite,
-  }
-}
-
-function cloneNode(node: ResearchNode): ResearchNode {
-  return {
-    ...node,
-    children: [...node.children],
-    snapshot: cloneSnapshot(node.snapshot),
-    move: node.move ? { ...node.move } : null,
-    marks: node.marks.map((mark) => ({
-      ...mark,
-      from: mark.from ? { ...mark.from } : undefined,
-      to: mark.to ? { ...mark.to } : undefined,
-    })),
-  }
-}
-
-function cloneTree(tree: ResearchTree): ResearchTree {
-  return {
-    ...tree,
-    nodes: Object.fromEntries(Object.entries(tree.nodes).map(([id, node]) => [id, cloneNode(node)])),
-  }
-}
-
-function createRootNode(boardSize: number): ResearchNode {
-  return {
-    id: makeId('root'),
-    parentId: null,
-    children: [],
-    move: null,
-    snapshot: {
-      board: createBoard(boardSize),
-      currentPlayer: 'black',
-      moveNumber: 0,
-      lastMove: null,
-      capturedByBlack: 0,
-      capturedByWhite: 0,
-    },
-    comment: '',
-    marks: [],
-  }
-}
-
-export function createResearchTree(
-  boardSize = 19,
-  ruleSet: RuleSet = 'chinese',
-  komi = 3.75,
-): ResearchTree {
-  const root = createRootNode(boardSize)
-  return {
-    rootId: root.id,
-    currentNodeId: root.id,
-    nodes: { [root.id]: root },
-    boardSize,
-    komi,
-    ruleSet,
-    mode: 'play',
-    dirty: false,
+    rootId: id, currentNodeId: id, boardSize, komi, ruleSet, mode: 'play', dirty: false,
+    title: '未命名研究', blackName: '黑方', whiteName: '白方',
+    nodes: { [id]: {
+      id, parentId: null, children: [], move: null, comment: '', marks: [], setup: false, properties: {},
+      snapshot: { board: createBoard(boardSize), currentPlayer: 'black', moveNumber: 0, lastMove: null, capturedByBlack: 0, capturedByWhite: 0 },
+    } },
   }
 }
 
@@ -94,152 +26,162 @@ export function currentResearchNode(tree: ResearchTree): ResearchNode {
 
 export function researchPath(tree: ResearchTree, nodeId = tree.currentNodeId): ResearchNode[] {
   const path: ResearchNode[] = []
-  let cursor = tree.nodes[nodeId]
-  while (cursor) {
-    path.unshift(cursor)
-    if (!cursor.parentId) break
-    cursor = tree.nodes[cursor.parentId]
+  let node: ResearchNode | undefined = tree.nodes[nodeId]
+  while (node) {
+    path.push(node)
+    node = node.parentId ? tree.nodes[node.parentId] : undefined
   }
-  return path
+  return path.reverse()
 }
 
-function hasSimpleKo(tree: ResearchTree, parent: ResearchNode, nextBoard: Board): boolean {
-  if (!parent.parentId) return false
-  const grandparent = tree.nodes[parent.parentId]
-  return Boolean(grandparent && boardHash(grandparent.snapshot.board) === boardHash(nextBoard))
+export function selectResearchNode(tree: ResearchTree, nodeId: string): ResearchTree {
+  return tree.nodes[nodeId] ? { ...tree, currentNodeId: nodeId } : tree
 }
 
-function appendNode(tree: ResearchTree, parent: ResearchNode, move: ResearchMove, snapshot: ResearchSnapshot): ResearchTree {
-  const next = cloneTree(tree)
-  const node: ResearchNode = {
-    id: makeId('node'),
-    parentId: parent.id,
-    children: [],
-    move,
-    snapshot,
-    comment: '',
-    marks: [],
+function replaceNode(tree: ResearchTree, node: ResearchNode): ResearchTree {
+  return { ...tree, dirty: true, nodes: { ...tree.nodes, [node.id]: node } }
+}
+
+function appendNode(tree: ResearchTree, snapshot: ResearchSnapshot, move: ResearchNode['move']): ResearchTree {
+  const parent = currentResearchNode(tree)
+  const id = researchId()
+  const node: ResearchNode = { id, parentId: parent.id, children: [], snapshot, move, comment: '', marks: [], setup: false, properties: {} }
+  return {
+    ...tree, dirty: true, currentNodeId: id,
+    nodes: { ...tree.nodes, [parent.id]: { ...parent, children: [...parent.children, id] }, [id]: node },
   }
-  next.nodes[node.id] = node
-  next.nodes[parent.id].children.push(node.id)
-  next.currentNodeId = node.id
-  next.dirty = true
-  return next
 }
 
 export function appendResearchMove(tree: ResearchTree, row: number, col: number): { tree: ResearchTree; error: string | null } {
   const parent = currentResearchNode(tree)
-  const stone = parent.snapshot.currentPlayer
-  const result = applyMove(parent.snapshot.board, row, col, stone)
-  if (!result) return { tree, error: '此处不能落子' }
-  if (hasSimpleKo(tree, parent, result.board)) return { tree, error: '此手违反打劫规则' }
-
+  const { board, currentPlayer: stone } = parent.snapshot
+  if (!Number.isInteger(row) || !Number.isInteger(col) || board[row]?.[col] !== null) return { tree, error: '此处不能落子' }
+  const existing = parent.children.map((id) => tree.nodes[id]).find((node) => !node.setup && node.move?.stone === stone && node.move.row === row && node.move.col === col)
+  if (existing) return { tree: selectResearchNode(tree, existing.id), error: null }
+  const sign = stone === 'black' ? 1 : -1
+  const position = new SabakiBoard(board.map((line) => line.map((cell) => cell === 'black' ? 1 : cell === 'white' ? -1 : 0)))
+  if (position.analyzeMove(sign, [col, row]).suicide) return { tree, error: '此手为自杀，不能落子' }
+  const result = position.makeMove(sign, [col, row], { preventOverwrite: true, preventSuicide: true })
+  const nextBoard = result.signMap.map((line) => line.map((cell): Stone | null => cell === 1 ? 'black' : cell === -1 ? 'white' : null))
+  if (!parent.setup && parent.parentId && boardHash(tree.nodes[parent.parentId].snapshot.board) === boardHash(nextBoard)) return { tree, error: '此手违反打劫规则' }
   const snapshot: ResearchSnapshot = {
-    board: result.board,
-    currentPlayer: nextPlayer(stone),
-    moveNumber: parent.snapshot.moveNumber + 1,
+    board: nextBoard, currentPlayer: stone === 'black' ? 'white' : 'black', moveNumber: parent.snapshot.moveNumber + 1,
     lastMove: { row, col },
-    capturedByBlack: parent.snapshot.capturedByBlack + (stone === 'black' ? result.captured : 0),
-    capturedByWhite: parent.snapshot.capturedByWhite + (stone === 'white' ? result.captured : 0),
+    capturedByBlack: parent.snapshot.capturedByBlack + (stone === 'black' ? result.getCaptures(1) : 0),
+    capturedByWhite: parent.snapshot.capturedByWhite + (stone === 'white' ? result.getCaptures(-1) : 0),
   }
-  return {
-    tree: appendNode(tree, parent, { stone, row, col, coordinate: coordinateLabel(row, col, tree.boardSize) }, snapshot),
-    error: null,
-  }
+  return { tree: appendNode(tree, snapshot, { stone, row, col, coordinate: coordinateLabel(row, col, tree.boardSize) }), error: null }
 }
 
 export function appendResearchPass(tree: ResearchTree): ResearchTree {
-  const parent = currentResearchNode(tree)
-  const stone = parent.snapshot.currentPlayer
-  return appendNode(tree, parent, {
-    stone,
-    coordinate: 'pass',
-    pass: true,
-  }, {
-    ...cloneSnapshot(parent.snapshot),
-    currentPlayer: nextPlayer(stone),
-    moveNumber: parent.snapshot.moveNumber + 1,
-    lastMove: null,
-  })
+  const node = currentResearchNode(tree)
+  const existing = node.children.map((id) => tree.nodes[id]).find((child) => child.move?.pass && !child.setup && child.move.stone === node.snapshot.currentPlayer)
+  if (existing) return selectResearchNode(tree, existing.id)
+  return appendNode(tree, { ...node.snapshot, currentPlayer: node.snapshot.currentPlayer === 'black' ? 'white' : 'black', moveNumber: node.snapshot.moveNumber + 1, lastMove: null }, { stone: node.snapshot.currentPlayer, coordinate: 'pass', pass: true })
 }
 
-export function selectResearchNode(tree: ResearchTree, nodeId: string): ResearchTree {
-  if (!tree.nodes[nodeId]) return tree
-  return { ...tree, currentNodeId: nodeId }
+export function appendResearchVariation(tree: ResearchTree, coordinates: string[]): { tree: ResearchTree; error: string | null } {
+  let next = tree
+  for (const coordinate of coordinates) {
+    if (coordinate.toLowerCase() === 'pass') { next = appendResearchPass(next); continue }
+    const point = positionFromCoordinate(coordinate, tree.boardSize)
+    if (!point || point.col >= tree.boardSize) return { tree, error: `无效落点：${coordinate}` }
+    const result = appendResearchMove(next, point.row, point.col)
+    if (result.error) return { tree, error: result.error }
+    next = result.tree
+  }
+  return { tree: next, error: null }
 }
 
 export function deleteResearchVariation(tree: ResearchTree, nodeId: string): ResearchTree {
   const node = tree.nodes[nodeId]
-  if (!node || node.id === tree.rootId) return tree
-  const next = cloneTree(tree)
-  const parent = node.parentId ? next.nodes[node.parentId] : null
-  if (parent) parent.children = parent.children.filter((childId) => childId !== nodeId)
-
-  const remove = (id: string) => {
-    next.nodes[id]?.children.forEach(remove)
-    delete next.nodes[id]
+  if (!node?.parentId) return tree
+  const nodes = { ...tree.nodes }
+  const pending = [nodeId]
+  while (pending.length) {
+    const id = pending.pop()!
+    pending.push(...nodes[id].children)
+    delete nodes[id]
   }
-  remove(nodeId)
-  if (!next.nodes[next.currentNodeId]) next.currentNodeId = parent?.id ?? next.rootId
-  next.dirty = true
+  const parent = nodes[node.parentId]
+  nodes[parent.id] = { ...parent, children: parent.children.filter((id) => id !== nodeId) }
+  return { ...tree, dirty: true, nodes, currentNodeId: nodes[tree.currentNodeId] ? tree.currentNodeId : parent.id }
+}
+
+export function promoteResearchVariation(tree: ResearchTree): ResearchTree {
+  let next = tree
+  for (const node of researchPath(tree).slice(1)) {
+    const parent = next.nodes[node.parentId!]
+    if (parent.children[0] !== node.id) next = replaceNode(next, { ...parent, children: [node.id, ...parent.children.filter((id) => id !== node.id)] })
+  }
   return next
 }
 
 export function updateResearchComment(tree: ResearchTree, nodeId: string, comment: string): ResearchTree {
-  if (!tree.nodes[nodeId]) return tree
-  const next = cloneTree(tree)
-  next.nodes[nodeId].comment = comment
-  next.dirty = true
-  return next
-}
-
-export function addResearchMark(tree: ResearchTree, nodeId: string, mark: Omit<BoardMark, 'id'>): ResearchTree {
-  if (!tree.nodes[nodeId]) return tree
-  const next = cloneTree(tree)
-  next.nodes[nodeId].marks.push({ ...mark, id: makeId('mark') })
-  next.dirty = true
-  return next
+  const node = tree.nodes[nodeId]
+  return !node || node.comment === comment ? tree : replaceNode(tree, { ...node, comment })
 }
 
 export function clearResearchMarks(tree: ResearchTree, nodeId: string): ResearchTree {
-  if (!tree.nodes[nodeId]) return tree
-  const next = cloneTree(tree)
-  next.nodes[nodeId].marks = []
-  next.dirty = true
-  return next
+  const node = tree.nodes[nodeId]
+  return node?.marks.length ? replaceNode(tree, { ...node, marks: [] }) : tree
 }
 
-export function editResearchSetup(
-  tree: ResearchTree,
-  row: number,
-  col: number,
-  stone: Stone | null,
-): ResearchTree {
-  const current = tree.nodes[tree.currentNodeId]
-  if (!current || !current.snapshot.board[row]?.length || col < 0 || col >= current.snapshot.board.length) return tree
-
-  const next = cloneTree(tree)
-  const node = next.nodes[next.currentNodeId]
-  node.snapshot.board[row][col] = stone
-  node.snapshot.lastMove = null
-  node.children.forEach((childId) => deleteResearchSubtree(next.nodes, childId))
-  node.children = []
-  next.dirty = true
-  return next
+export function addResearchPointMark(tree: ResearchTree, nodeId: string, type: BoardMarkType, row: number, col: number): ResearchTree {
+  const node = tree.nodes[nodeId]
+  if (!node || row < 0 || col < 0 || row >= tree.boardSize || col >= tree.boardSize) return tree
+  const existing = node.marks.find((mark) => mark.row === row && mark.col === col)
+  const marks: BoardMark[] = node.marks.filter((mark) => mark.row !== row || mark.col !== col)
+  if (existing?.type !== type) marks.push({ id: researchId('mark'), type, row, col })
+  return replaceNode(tree, { ...node, marks })
 }
 
-function deleteResearchSubtree(nodes: Record<string, ResearchNode>, nodeId: string) {
-  nodes[nodeId]?.children.forEach((childId) => deleteResearchSubtree(nodes, childId))
-  delete nodes[nodeId]
+export function editResearchSetup(tree: ResearchTree, row: number, col: number, stone: Stone | null): ResearchTree {
+  let node = currentResearchNode(tree)
+  if (node.snapshot.board[row]?.[col] === undefined || node.snapshot.board[row][col] === stone) return tree
+  let next = tree
+  for (const id of node.children) next = deleteResearchVariation(next, id)
+  node = currentResearchNode(next)
+  const board = cloneBoard(node.snapshot.board)
+  board[row][col] = stone
+  return replaceNode(next, { ...node, setup: true, snapshot: { ...node.snapshot, board, lastMove: null } })
 }
 
-export function addResearchPointMark(
-  tree: ResearchTree,
-  nodeId: string,
-  type: BoardMarkType,
-  row: number,
-  col: number,
-): ResearchTree {
-  if (!tree.nodes[nodeId]) return tree
-  return addResearchMark(tree, nodeId, { type, row, col })
+export function setResearchPlayer(tree: ResearchTree, stone: Stone): ResearchTree {
+  const node = currentResearchNode(tree)
+  if (node.snapshot.currentPlayer === stone) return tree
+  let next = tree
+  for (const id of node.children) next = deleteResearchVariation(next, id)
+  return replaceNode(next, { ...currentResearchNode(next), setup: true, snapshot: { ...node.snapshot, currentPlayer: stone, lastMove: null } })
+}
+
+export function researchLine(tree: ResearchTree, preferred: Record<string, string>): ResearchNode[] {
+  const path = researchPath(tree)
+  let node = path.at(-1)!
+  while (node.children.length) {
+    node = tree.nodes[node.children.includes(preferred[node.id]) ? preferred[node.id] : node.children[0]]
+    path.push(node)
+  }
+  return path
+}
+
+export function researchGraph(tree: ResearchTree): VariationGraph {
+  const path = new Set(researchPath(tree).map((node) => node.id))
+  const graph: VariationGraph = { nodes: [], edges: [], width: 0, height: 0 }
+  let lane = 0
+  const pending = [{ id: tree.rootId, depth: 0, lane: 0 }]
+  while (pending.length) {
+    const entry = pending.pop()!
+    const node = tree.nodes[entry.id]
+    const row = entry.lane < 0 ? ++lane : entry.lane
+    graph.nodes.push({ id: node.id, x: 22 + entry.depth * 38, y: 24 + row * 38, label: node.move ? String(node.snapshot.moveNumber) : '·', stone: node.move?.stone ?? null, current: node.id === tree.currentNodeId, onPath: path.has(node.id), comment: Boolean(node.comment) })
+    graph.width = Math.max(graph.width, 44 + entry.depth * 38)
+    graph.height = Math.max(graph.height, 48 + row * 38)
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      const child = node.children[index]
+      graph.edges.push({ from: node.id, to: child, active: path.has(child) })
+      pending.push({ id: child, depth: entry.depth + 1, lane: index === 0 ? row : -1 })
+    }
+  }
+  return graph
 }

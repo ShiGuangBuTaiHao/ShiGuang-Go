@@ -33,6 +33,7 @@ export interface ResearchSnapshot {
 }
 
 export interface ResearchNode {
+  sgfProperties?: Record<string, string[]>
   id: string
   parentId: string | null
   children: string[]
@@ -40,6 +41,8 @@ export interface ResearchNode {
   snapshot: ResearchSnapshot
   comment: string
   marks: BoardMark[]
+  setup: boolean
+  properties: Record<string, string[]>
 }
 
 export interface ResearchTree {
@@ -51,4 +54,25 @@ export interface ResearchTree {
   ruleSet: RuleSet
   mode: ResearchMode
   dirty: boolean
+  title: string
+  blackName: string
+  whiteName: string
+}
+
+export interface VariationGraphNode {
+  id: string
+  x: number
+  y: number
+  label: string
+  stone: Stone | null
+  current: boolean
+  onPath: boolean
+  comment: boolean
+}
+
+export interface VariationGraph {
+  nodes: VariationGraphNode[]
+  edges: Array<{ from: string; to: string; active: boolean }>
+  width: number
+  height: number
 }
