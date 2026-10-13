@@ -31,6 +31,15 @@ function cloneSnapshot(snapshot: GameSnapshot): GameSnapshot {
   }
 }
 
+export function resumeAfterAdjudication(snapshot: GameSnapshot): GameSnapshot | null {
+  if (snapshot.status === 'finished' && snapshot.result?.reason !== 'two-passes') return null
+  const next = cloneSnapshot(snapshot)
+  next.status = 'playing'
+  next.result = null
+  next.consecutivePasses = 0
+  return next
+}
+
 export interface SessionApplyResult {
   event: GameEvent | null
   error: string | null

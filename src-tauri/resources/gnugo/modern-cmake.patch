@@ -1,0 +1,26 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,4 +1,6 @@
++cmake_minimum_required(VERSION 3.5)
+ PROJECT(GNUGo)
++ADD_DEFINITIONS(-D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_DEPRECATE)
+ 
+ INCLUDE(CheckIncludeFiles)
+ CHECK_INCLUDE_FILES(sys/times.h HAVE_SYS_TIMES_H)
+--- a/patterns/CMakeLists.txt
++++ b/patterns/CMakeLists.txt
+@@ -90,9 +90,9 @@
+ ########### Generate files. ##############
+ 
+-GET_TARGET_PROPERTY(JOSEKI_EXE joseki LOCATION)
+-GET_TARGET_PROPERTY(MKPAT_EXE mkpat LOCATION)
+-GET_TARGET_PROPERTY(MKEYES_EXE mkeyes LOCATION)
+-GET_TARGET_PROPERTY(MKMCPAT_EXE mkmcpat LOCATION)
+-GET_TARGET_PROPERTY(UNCOMPRESS_FUSEKI_EXE uncompress_fuseki LOCATION)
++SET(JOSEKI_EXE $<TARGET_FILE:joseki>)
++SET(MKPAT_EXE $<TARGET_FILE:mkpat>)
++SET(MKEYES_EXE $<TARGET_FILE:mkeyes>)
++SET(MKMCPAT_EXE $<TARGET_FILE:mkmcpat>)
++SET(UNCOMPRESS_FUSEKI_EXE $<TARGET_FILE:uncompress_fuseki>)
+ 
+ SET(JOSEKI_INPUTS "")

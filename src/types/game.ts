@@ -4,7 +4,7 @@ export type GameStatus = 'playing' | 'finished'
 
 export type GameEndReason = 'resignation' | 'timeout' | 'two-passes' | 'score'
 
-export interface GameScore {
+export interface CountedGameScore {
   blackStones: number
   whiteStones: number
   blackTerritory: number
@@ -18,6 +18,18 @@ export interface GameScore {
   ruleSet: string
   deadStones: string[]
 }
+
+export interface RefereeGameScore {
+  engine: 'gnugo'
+  finalScore: string
+  margin: number
+  komi: number
+  ruleSet: string
+  deadStones: string[]
+  sekiStones: string[]
+}
+
+export type GameScore = CountedGameScore | RefereeGameScore
 
 export interface GameResult {
   winner: Stone | null

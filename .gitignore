@@ -26,6 +26,9 @@ output/
 *.sw?
 
 # Local KataGo runtime files (large, downloaded separately)
+work/
+src-tauri/resources/gnugo/*.exe
+src-tauri/resources/gnugo/*.dll
 src-tauri/resources/katago/*.exe
 src-tauri/resources/katago/*.dll
 src-tauri/resources/katago/*.bin.gz

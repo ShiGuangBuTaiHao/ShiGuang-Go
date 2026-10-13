@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { applyGameCommand, createInitialSnapshot } from '../domain/gameSession'
+import { applyGameCommand, createInitialSnapshot, resumeAfterAdjudication } from '../domain/gameSession'
 import type { GameCommand, GameScore, GameSnapshot, Stone } from '../types/game'
 
 export const useGameStore = defineStore('game', () => {
@@ -33,6 +33,15 @@ export const useGameStore = defineStore('game', () => {
   function resign(reason: 'resignation' | 'timeout' = 'resignation') { return dispatch({ type: 'resign', reason }) }
   function score(winner: Stone | null, result: GameScore) { return dispatch({ type: 'score', winner, score: result }) }
 
+  function resumeAfterScore() {
+    const snapshot = resumeAfterAdjudication(current.value)
+    if (!snapshot) return false
+    // Resuming is not a move: preserve the timeline and ko history.
+    timeline.value[cursor.value] = snapshot
+    message.value = ''
+    return true
+  }
+
   function loadSnapshot(snapshot: GameSnapshot) {
     timeline.value = [snapshot]
     cursor.value = 0
@@ -57,5 +66,5 @@ export const useGameStore = defineStore('game', () => {
     message.value = ''
   }
 
-  return { current, canUndo, canRedo, message, play, pass, resign, score, undo, redo, reset, dispatch, loadSnapshot }
+  return { current, canUndo, canRedo, message, play, pass, resign, score, resumeAfterScore, undo, redo, reset, dispatch, loadSnapshot }
 })

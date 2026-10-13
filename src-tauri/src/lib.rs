@@ -1,5 +1,6 @@
 mod katago;
 mod lan;
+mod gnugo;
 
 use std::path::PathBuf;
 use tauri::Manager;
@@ -21,6 +22,7 @@ pub fn run() {
             let warmup_state = katago_state.clone();
             app.manage(katago_state);
             app.manage(lan::LanState::new());
+            app.manage(gnugo::GnuGoState::default());
             tauri::async_runtime::spawn_blocking(move || {
                 let _ = warmup_state.warmup();
             });
@@ -40,6 +42,9 @@ pub fn run() {
             katago::final_score,
             katago::cancel_analysis,
             katago::warmup_engine,
+            gnugo::gnugo_adjudicate,
+            gnugo::gnugo_estimate,
+            gnugo::gnugo_cancel,
             lan::lan_get_local_addresses,
             lan::lan_scan_rooms,
             lan::lan_create_room,
