@@ -3,15 +3,15 @@
 ## 当前状态
 
 - 源码标签：`v1.0.0`，提交 `7dba4b75e04cb8e3d41478262700f15037df25dc`。
-- 原源码与标签已同步至 GitHub 和 Gitee；GitHub 完整版发行现保留 4 个附件，大小和 SHA-256 均与本地一致。Gitee 尚无发行页：本机有 SSH 源码推送权限，但缺少发行 API 授权。本状态核对于 2026 年 10 月 14 日。
-- 下载入口：`https://github.com/ShiGuangBuTaiHao/ShiGuang-Go/releases/tag/v1.0.0`。发行附件仅保留安装包、`SHA256SUMS.txt`、`INSTALLATION.md` 和 `THIRD-PARTY-LICENSES.zip`；另有 GitHub 自动提供的两个源码压缩包。
-- 已从发行附件移除的核对资料保留在仓库：[原构建资源清单](resource-manifest.json)、[原构建许可核对记录](license-review.json)、[第三方资源说明](../../THIRD_PARTY_ASSETS.md)。文件内容未因附件精简而删去。
+- 原源码与标签已同步至 GitHub 和 Gitee；GitHub 完整版发行现保留 3 个附件，大小和 SHA-256 均与本地一致。Gitee 尚无发行页：本机有 SSH 源码推送权限，但缺少发行 API 授权。本状态核对于 2026 年 10 月 14 日。
+- 下载入口：`https://github.com/ShiGuangBuTaiHao/ShiGuang-Go/releases/tag/v1.0.0`。发行附件仅保留安装包、`SHA256SUMS.txt` 和 `INSTALLATION.md`；另有 GitHub 自动提供的两个源码压缩包。
+- 已从发行附件移除的资料保留在仓库：[许可资料包](THIRD-PARTY-LICENSES.zip)、[原构建资源清单](resource-manifest.json)、[原构建许可核对记录](license-review.json)、[第三方资源说明](../../THIRD_PARTY_ASSETS.md)。文件内容未因附件精简而删去。
 - 本地安装包：`output/v1.0.0-full/ShiGuang-Go_1.0.0_windows-x64-full-setup.exe`，1,060,459,499 字节。
 - 安装包 SHA-256：`c68180f563c74bebdbfab5776132381bbe73b3d54cdc6256c4e625bfac866fbd`。
 - 本地打包程序的 13 项界面检查通过，包括启动、棋盘绘制、落子、悔棋、取消数子、SGF 导入及备注编辑；启动使用包内 KataGo 资源。
 - 当前机器上的真实 KataGo 分析已通过，返回 361 个归属值和 12 个候选点；这不等于在干净电脑上完成安装验证。
 - 项目所有者于 2026 年 10 月 14 日明确要求直接发布现有完整版，已按要求完成 GitHub 上传；以下许可及安装验证事项仍未全部解决。发布操作和资料收集成功不代表第三方再分发资格已经确认。
-- 现有安装包未重建。补充许可资料作为独立附件提供；`resource-manifest.json` 和 `license-review.json` 保留原构建记录。原构建的 `uploadApproved: false` 是构建时状态，不代表本次用户发布指令，也不是许可核验结论。
+- 现有安装包未重建，包内许可证未删除。补充许可资料转存至源码仓库，不再单独列为发行附件；`resource-manifest.json` 和 `license-review.json` 保留原构建记录。原构建的 `uploadApproved: false` 是构建时状态，不代表本次用户发布指令，也不是许可核验结论。
 - 本机上传与校验记录见 `output/v1.0.0-full/publication.json`，明确区分用户发布要求与未完成的许可审核。
 - 后续棋谱库工作区改动不属于该标签，不应通过移动既有标签加入本次发行。
 
