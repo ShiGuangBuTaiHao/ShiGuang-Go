@@ -1,21 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, toRefs, watch } from 'vue'
 import {
-  ArrowLeft,
-  Archive,
   Check,
   Download,
   FileUp,
   FolderPlus,
-  LayoutGrid,
-  List,
   LoaderCircle,
+  MoreHorizontal,
   PanelLeft,
   PanelRight,
   Plus,
-  Search,
-  SlidersHorizontal,
-  Tag,
   Trash2,
   Undo2,
   X,
@@ -27,12 +21,14 @@ import LibraryNavigation from '../components/library/LibraryNavigation.vue'
 import RecordList from '../components/library/RecordList.vue'
 import RecordPreview from '../components/library/RecordPreview.vue'
 import LibraryDialog from '../components/library/LibraryDialog.vue'
+import LibraryToolbar from '../components/library/LibraryToolbar.vue'
+import LibraryPane from '../components/library/LibraryPane.vue'
+import { filterChips, filterLibraryRecords, pageCount, type FilterKey } from '../components/library/workspace'
 import { useLibraryStore } from '../stores/library'
 import { useResearchStore } from '../stores/research'
 import { komiFor } from '../domain/gameSetup'
 import {
   REVIEW_LABELS,
-  SOURCE_LABELS,
   type ImportResult,
   type LibraryRecord,
   type RecordMetadata,
@@ -52,6 +48,16 @@ const router = useRouter(),
 const fileInput = ref<HTMLInputElement | null>(null),
   backupInput = ref<HTMLInputElement | null>(null)
 const { sidebarVisible, previewVisible, filtersVisible, view, page, sort, ascending, sizeFilter, sourceFilter, reviewFilter, fromDate, toDate } = toRefs(library.ui)
+const viewportWidth = ref(window.innerWidth)
+const navigationDrawer = computed(() => viewportWidth.value < 900)
+const previewDrawer = computed(() => viewportWidth.value < 1280)
+const navigationDrawerOpen = ref(false), previewDrawerOpen = ref(false)
+const navigationShown = computed(() => navigationDrawer.value ? navigationDrawerOpen.value : sidebarVisible.value)
+const previewShown = computed(() => previewDrawer.value ? previewDrawerOpen.value : previewVisible.value)
+const backupMenu = ref<HTMLDetailsElement | null>(null)
+function resizeWorkspace() { viewportWidth.value = window.innerWidth }
+function closeNavigation() { if (navigationDrawer.value) navigationDrawerOpen.value = false; else sidebarVisible.value = false }
+function closePreview() { if (previewDrawer.value) previewDrawerOpen.value = false; else previewVisible.value = false }
 const modal = ref<
   | 'create'
   | 'import'
@@ -147,52 +153,20 @@ const heading = computed(
       ? library.category.slice(4)
       : '全部棋谱'),
 )
-const filtered = computed(() =>
-  library.visibleRecords
-    .filter((record) => {
-      if (
-        library.category.startsWith('collection-') &&
-        !record.collectionIds.includes(library.category)
-      )
-        return false
-      if (
-        library.category.startsWith('tag:') &&
-        !record.tags.includes(library.category.slice(4))
-      )
-        return false
-      return (
-        (!sizeFilter.value || record.boardSize === Number(sizeFilter.value)) &&
-        (!sourceFilter.value || record.source === sourceFilter.value) &&
-        (!reviewFilter.value || record.reviewState === reviewFilter.value) &&
-        (!fromDate.value || record.date >= fromDate.value) &&
-        (!toDate.value || record.date <= toDate.value)
-      )
-    })
-    .sort((a, b) => {
-      const field =
-        library.category === 'recent' && sort.value === 'updatedAt'
-          ? 'openedAt'
-          : sort.value
-      const value = (record: LibraryRecord) =>
-        field === 'players'
-          ? `${record.black} ${record.white}`
-          : String(record[field as keyof LibraryRecord] ?? '')
-      return (
-        value(a).localeCompare(value(b), 'zh-CN', { numeric: true }) *
-        (ascending.value ? 1 : -1)
-      )
-    }),
-)
-const filterCount = computed(
-  () =>
-    [
-      sizeFilter.value,
-      sourceFilter.value,
-      reviewFilter.value,
-      fromDate.value,
-      toDate.value,
-    ].filter(Boolean).length,
-)
+const filters = computed(() => ({ sizeFilter: sizeFilter.value, sourceFilter: sourceFilter.value, reviewFilter: reviewFilter.value, fromDate: fromDate.value, toDate: toDate.value }))
+const filtered = computed(() => filterLibraryRecords(library.visibleRecords, library.category, filters.value, sort.value, ascending.value))
+const hasConditions = computed(() => Boolean(library.query.trim() || filterChips(filters.value).length))
+const emptyTitle = computed(() => {
+  if (hasConditions.value) return '没有符合条件的棋谱'
+  if (library.category === 'trash') return '回收站为空'
+  if (library.category === 'favorites') return '暂无收藏棋谱'
+  if (library.category === 'recent') return '暂无最近打开的棋谱'
+  if (library.category === 'pending') return '暂无待复盘棋谱'
+  if (library.category.startsWith('collection-')) return '棋谱集为空'
+  if (library.category.startsWith('tag:')) return '此标签下暂无棋谱'
+  return '暂无棋谱'
+})
+function updateFilter(key: FilterKey, value: string) { library.ui[key] = value }
 const isTrash = computed(() => library.category === 'trash'),
   previewRecord = computed(
     () =>
@@ -221,15 +195,16 @@ watch(
     library.selectedIds = []
   },
 )
-watch(
-  () => filtered.value.length,
-  () => {
-    page.value = Math.min(
-      page.value,
-      Math.max(1, Math.ceil(filtered.value.length / 40)),
-    )
-  },
-)
+watch(filtered, records => {
+  page.value = Math.max(1, Math.min(page.value, pageCount(records.length)))
+  const ids = new Set(records.map(record => record.id))
+  library.selectedIds = library.selectedIds.filter(id => ids.has(id))
+  if (library.selectedId && !ids.has(library.selectedId)) library.selectedId = null
+})
+watch([sort, ascending, view, page], () => { library.ui.scrollTop = 0 })
+watch([sort, ascending], () => { page.value = 1 })
+watch(navigationDrawer, () => { navigationDrawerOpen.value = false })
+watch(previewDrawer, () => { previewDrawerOpen.value = false })
 function notify(message: string) {
   toast.value = message
   if (toastTimer) clearTimeout(toastTimer)
@@ -252,17 +227,18 @@ async function run(task: () => Promise<void>) {
 }
 function select(id: string) {
   library.selectedId = id
-  previewVisible.value = true
+  if (previewDrawer.value) previewDrawerOpen.value = true
+  else previewVisible.value = true
 }
-function toggleSidebar() { if (window.innerWidth <= 1100 && previewVisible.value) { previewVisible.value = false; sidebarVisible.value = true } else sidebarVisible.value = !sidebarVisible.value }
-function togglePreview() { previewVisible.value = !previewVisible.value; if (previewVisible.value && !previewRecord.value) library.selectedId = filtered.value[0]?.id ?? null }
+function toggleSidebar() { if (navigationDrawer.value) navigationDrawerOpen.value = !navigationDrawerOpen.value; else sidebarVisible.value = !sidebarVisible.value }
+function togglePreview() { if (previewDrawer.value) previewDrawerOpen.value = !previewDrawerOpen.value; else previewVisible.value = !previewVisible.value }
 function manageCollection(collection: RecordCollection) { managedCollection.value = { ...collection }; modal.value = 'manage-collection' }
 async function renameCollection() { await run(async () => { if (!managedCollection.value) return; await library.renameCollection(managedCollection.value.id, managedCollection.value.name); modal.value = null; notify('棋谱集已重命名') }) }
 async function removeCollection() { await run(async () => { if (!managedCollection.value) return; await library.removeCollection(managedCollection.value.id); modal.value = null; notify('棋谱集已移除，棋谱已保留') }) }
 function selectCategory(category: string) {
   library.category = category
   library.selectedIds = []
-  if (window.innerWidth <= 760) sidebarVisible.value = false
+  navigationDrawerOpen.value = false
 }
 function toggle(id: string) {
   library.selectedIds = library.selectedIds.includes(id)
@@ -458,11 +434,13 @@ function download(ids: string[]) {
   })
 }
 function backup() {
+  backupMenu.value?.removeAttribute('open')
   void run(async () => {
     if (await exportLibraryBackup(library.data)) notify('棋谱库备份已导出')
   })
 }
 function chooseBackup(event: Event) {
+  backupMenu.value?.removeAttribute('open')
   const input = event.target as HTMLInputElement
   pendingBackup.value = input.files?.[0] ?? null
   input.value = ''
@@ -497,6 +475,7 @@ function dragLeave() {
   }
 }
 onMounted(async () => {
+  window.addEventListener('resize', resizeWorkspace)
   await library.init()
   if (isTauri() && !unmounted) {
     try { const stop = await getCurrentWebview().onDragDropEvent((event) => {
@@ -513,6 +492,7 @@ onMounted(async () => {
   }
 })
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', resizeWorkspace)
   unmounted = true
   stopDrop?.()
   if (toastTimer) clearTimeout(toastTimer)
@@ -527,354 +507,53 @@ onBeforeUnmount(() => {
     @dragleave="dragLeave"
     @drop="drop"
   >
-    <header class="library-topbar">
-      <button
-        class="lib-icon back-command"
-        type="button"
-        title="返回主菜单"
-        aria-label="返回主菜单"
-        @click="router.push({ name: 'mode-select' })"
-      >
-        <ArrowLeft :size="18" />
-      </button>
-      <h1>棋谱库</h1>
-      <span class="library-total">{{ library.counts.all }} 局棋谱</span>
-      <div class="topbar-spacer" />
-      <button
-        class="lib-button"
-        type="button"
-        :disabled="busy"
-        @click="fileInput?.click()"
-      >
-        <FileUp :size="15" /><span>导入 SGF</span></button
-      ><button
-        class="lib-button primary"
-        type="button"
-        :disabled="busy"
-        @click="modal = 'create'"
-      >
-        <Plus :size="16" /><span>新建棋谱</span>
-      </button>
-      <details class="backup-menu">
-        <summary class="lib-icon" aria-label="棋谱库备份" title="棋谱库备份">
-          <Archive :size="17" />
-        </summary>
-        <div class="command-menu">
-          <button type="button" @click="backup">
-            <Download :size="15" />导出整库备份</button
-          ><button type="button" @click="backupInput?.click()">
-            <FileUp :size="15" />从备份恢复
-          </button>
-        </div>
-      </details>
+    <header class="workspace-toolbar library-topbar">
+      <h1 class="visually-hidden">棋谱库</h1>
+      <div class="topbar-actions">
+        <button class="workspace-button" type="button" :disabled="busy" @click="fileInput?.click()"><FileUp :size="15" /><span>导入</span></button>
+        <button class="workspace-button primary" type="button" :disabled="busy" @click="modal = 'create'"><Plus :size="16" /><span>新建</span></button>
+        <div class="topbar-spacer" />
+        <details ref="backupMenu" class="backup-menu" @keydown.esc.stop.prevent="backupMenu?.removeAttribute('open')">
+          <summary class="workspace-icon" aria-label="棋谱库更多操作" title="棋谱库更多操作"><MoreHorizontal :size="18" /></summary>
+          <div class="command-menu"><button type="button" :disabled="busy" @click="backup"><Download :size="15" />导出整库备份</button><button type="button" :disabled="busy" @click="backupInput?.click()"><FileUp :size="15" />从备份恢复</button></div>
+        </details>
+      </div>
     </header>
-    <input
-      ref="fileInput"
-      class="visually-hidden"
-      type="file"
-      accept=".sgf"
-      multiple
-      @change="inputFiles"
-    /><input
-      ref="backupInput"
-      class="visually-hidden"
-      type="file"
-      accept=".json"
-      @change="chooseBackup"
-    />
-    <div v-if="error || library.error" class="library-error" role="alert">
-      <span>{{ error || library.error }}</span><button
-        class="lib-icon"
-        type="button"
-        aria-label="关闭错误消息"
-        title="关闭"
-        @click="clearError"
-      >
-        <X :size="15" />
-      </button>
-    </div>
-    <div
-      class="library-layout"
-      :class="{
-        'has-navigation': sidebarVisible,
-        'has-preview': previewVisible && previewRecord,
-      }"
-    >
-      <LibraryNavigation
-        v-if="sidebarVisible"
-        :category="library.category"
-        :counts="library.counts"
-        :collections="library.data.collections"
-        :tags="tags"
-        :collection-counts="collectionCounts"
-        :tag-counts="tagCounts"
-        @select="selectCategory"
-        @create-collection="modal = 'collection'"
-        @manage-collection="manageCollection"
-      />
+    <input ref="fileInput" class="visually-hidden" type="file" accept=".sgf" multiple @change="inputFiles" />
+    <input ref="backupInput" class="visually-hidden" type="file" accept=".json" @change="chooseBackup" />
+    <div v-if="error || library.error" class="library-error" role="alert"><span>{{ error || library.error }}</span><button class="workspace-icon" type="button" aria-label="关闭错误消息" title="关闭" @click="clearError"><X :size="15" /></button></div>
+    <div class="library-layout" :class="{ 'has-navigation': navigationShown && !navigationDrawer, 'has-preview': previewShown && !previewDrawer }">
+      <LibraryPane :visible="navigationShown" :drawer="navigationDrawer" side="left" label="棋谱分类导航" @close="closeNavigation">
+        <LibraryNavigation :category="library.category" :counts="library.counts" :collections="library.data.collections" :tags="tags" :collection-counts="collectionCounts" :tag-counts="tagCounts" :drawer="navigationDrawer"
+          @select="selectCategory" @create-collection="modal = 'collection'" @manage-collection="manageCollection" @close="closeNavigation" />
+      </LibraryPane>
       <section class="library-main" aria-label="棋谱列表">
-        <div class="library-list-heading">
-          <div class="list-heading-title">
-            <button
-              class="lib-icon"
-              type="button"
-              title="分类导航"
-              aria-label="切换分类导航"
-              :aria-expanded="sidebarVisible"
-              @click="toggleSidebar"
-            >
-              <PanelLeft :size="17" />
-            </button>
-            <h2>{{ heading }}</h2>
-            <span>{{ filtered.length }}</span>
-          </div>
-          <div class="list-heading-tools">
-            <button
-              class="lib-icon"
-              type="button"
-              title="切换预览"
-              aria-label="切换预览"
-              :aria-pressed="previewVisible"
-              @click="togglePreview"
-            >
-              <PanelRight :size="17" />
-            </button>
-            <div class="view-switch" role="group" aria-label="棋谱视图">
-              <button
-                class="lib-icon"
-                :class="{ selected: view === 'list' }"
-                type="button"
-                aria-label="列表视图"
-                title="列表视图"
-                @click="view = 'list'"
-              >
-                <List :size="16" /></button
-              ><button
-                class="lib-icon"
-                :class="{ selected: view === 'grid' }"
-                type="button"
-                aria-label="棋盘视图"
-                title="棋盘视图"
-                @click="view = 'grid'"
-              >
-                <LayoutGrid :size="16" />
-              </button>
-            </div>
-          </div>
-        </div>
-        <div class="library-search-row">
-          <label class="library-search"
-            ><Search :size="16" /><input
-              v-model="library.query"
-              type="search"
-              placeholder="搜索棋谱、棋手、赛事或标签"
-              aria-label="搜索棋谱" /><button
-              v-if="library.query"
-              class="lib-icon"
-              type="button"
-              aria-label="清空搜索"
-              title="清空搜索"
-              @click="library.query = ''"
-            >
-              <X :size="14" /></button></label
-          ><button
-            class="lib-button filter-button"
-            :class="{ active: filtersVisible || filterCount }"
-            type="button"
-            :aria-expanded="filtersVisible"
-            @click="filtersVisible = !filtersVisible"
-          >
-            <SlidersHorizontal :size="15" />筛选<span
-              v-if="filterCount"
-              class="filter-count"
-              >{{ filterCount }}</span
-            ></button
-          ><select v-model="sort" class="sort-select" aria-label="棋谱排序">
-            <option value="updatedAt">最近更新</option>
-            <option value="date">对局日期</option>
-            <option value="title">棋谱名称</option>
-            <option value="reviewState">复盘状态</option>
-          </select>
-        </div>
-        <div v-if="filtersVisible" class="filter-panel">
-          <label
-            >棋盘<select v-model="sizeFilter">
-              <option value="">全部尺寸</option>
-              <option value="19">19 路</option>
-              <option value="13">13 路</option>
-              <option value="9">9 路</option>
-            </select></label
-          ><label
-            >来源<select v-model="sourceFilter">
-              <option value="">全部来源</option>
-              <option
-                v-for="(label, key) in SOURCE_LABELS"
-                :key="key"
-                :value="key"
-              >
-                {{ label }}
-              </option>
-            </select></label
-          ><label
-            >复盘<select v-model="reviewFilter">
-              <option value="">全部状态</option>
-              <option
-                v-for="(label, key) in REVIEW_LABELS"
-                :key="key"
-                :value="key"
-              >
-                {{ label }}
-              </option>
-            </select></label
-          ><label>起始日期<input v-model="fromDate" type="date" /></label
-          ><label>结束日期<input v-model="toDate" type="date" /></label
-          ><button class="text-command" type="button" @click="resetFilters">
-            重置
-          </button>
-        </div>
-        <div v-if="library.selectedIds.length" class="batch-toolbar">
-          <span>已选择 {{ library.selectedIds.length }} 局</span
-          ><button
-            v-if="!isTrash"
-            class="text-command"
-            type="button"
-            :disabled="busy"
-            @click="modal = 'batch'"
-          >
-            <Tag :size="14" />整理</button
-          ><button
-            class="text-command"
-            type="button"
-            :disabled="busy"
-            @click="download(library.selectedIds)"
-          >
-            <Download :size="14" />导出</button
-          ><button
-            v-if="isTrash"
-            class="text-command"
-            type="button"
-            :disabled="busy"
-            @click="restore(library.selectedIds)"
-          >
-            <Undo2 :size="14" />恢复</button
-          ><button
-            class="text-command danger"
-            type="button"
-            :disabled="busy"
-            @click="askDelete(library.selectedIds)"
-          >
-            <Trash2 :size="14" />{{ isTrash ? '永久删除' : '删除' }}</button
-          ><button
-            class="lib-icon"
-            type="button"
-            title="取消选择"
-            aria-label="取消选择"
-            @click="library.selectedIds = []"
-          >
-            <X :size="14" />
-          </button>
-        </div>
-        <div
-          v-if="library.loading && !library.initialized"
-          class="library-empty-state"
-          role="status"
-        >
-          <LoaderCircle class="spinning" :size="24" />
-          <h3>正在读取棋谱库</h3>
-        </div>
-        <RecordList
-          v-else-if="filtered.length"
-          :records="filtered"
-          :selected-id="library.selectedId"
-          :selected-ids="library.selectedIds"
-          :view="view"
-          :sort="sort"
-          :ascending="ascending"
-          :page="page"
-          :scroll-top="library.ui.scrollTop"
-          @select="select"
-          @open="open"
-          @toggle="toggle"
-          @toggle-all="toggleAll"
-          @favorite="favorite"
-          @sort="sortBy"
-          @page="page = $event"
-          @scroll="library.ui.scrollTop = $event"
-        />
+        <header class="library-list-heading">
+          <div class="list-heading-title"><button class="workspace-icon" type="button" title="分类导航" aria-label="切换分类导航" :aria-expanded="navigationShown" @click="toggleSidebar"><PanelLeft :size="18" /></button><h2 :title="heading">{{ heading }}</h2><span class="category-count">{{ filtered.length }} 局</span></div>
+          <button class="workspace-icon" type="button" title="棋谱详情" aria-label="切换棋谱详情" :aria-pressed="previewShown" @click="togglePreview"><PanelRight :size="18" /></button>
+        </header>
+        <LibraryToolbar v-model:query="library.query" v-model:view="view" :filters="filters" :filters-visible="filtersVisible" :sort="sort" :ascending="ascending" :selection-count="library.selectedIds.length" :busy="busy" :trash="isTrash"
+          @update:sort="sortBy" @filter="updateFilter" @toggle-filters="filtersVisible = !filtersVisible" @toggle-direction="ascending = !ascending"
+          @clear="resetFilters" @cancel="library.selectedIds = []" @organize="modal = 'batch'" @download="download(library.selectedIds)" @remove="askDelete(library.selectedIds)" @restore="restore(library.selectedIds)" />
+        <div v-if="library.loading && !library.initialized" class="library-empty-state" role="status"><LoaderCircle class="spinning" :size="24" /><h3>正在读取棋谱库</h3></div>
+        <RecordList v-else-if="filtered.length" :records="filtered" :selected-id="library.selectedId" :selected-ids="library.selectedIds" :view="view" :sort="sort" :ascending="ascending" :page="page" :scroll-top="library.ui.scrollTop" :busy="busy" :trash="isTrash"
+          @select="select" @open="open" @toggle="toggle" @toggle-all="toggleAll" @favorite="favorite" @sort="sortBy" @page="page = $event" @scroll="library.ui.scrollTop = $event" />
         <div v-else class="library-empty-state">
-          <div
-            class="empty-library-image"
-            :class="{ compact: library.counts.all || isTrash }"
-          >
-            <img src="/card-backgrounds/library.png" alt="围棋棋谱收藏" />
-          </div>
-          <h3>
-            {{
-              isTrash
-                ? '回收站为空'
-                : library.counts.all
-                  ? '没有符合条件的棋谱'
-                  : '开始你的棋谱收藏'
-            }}
-          </h3>
-          <p>
-            {{
-              isTrash
-                ? '删除的棋谱会暂存在这里。'
-                : library.counts.all
-                  ? '调整搜索或筛选条件后重试。'
-                  : '导入 SGF，或创建一份新的棋谱。'
-            }}
-          </p>
+          <div class="empty-library-image"><img src="/card-backgrounds/library.png" alt="围棋棋谱收藏" /></div>
+          <h3>{{ emptyTitle }}</h3>
           <div class="empty-actions">
-            <button
-              v-if="!isTrash && !library.counts.all"
-              class="lib-button primary"
-              type="button"
-              @click="fileInput?.click()"
-            >
-              <FileUp :size="15" />导入棋谱</button
-            ><button
-              v-if="!isTrash && !library.counts.all"
-              class="lib-button"
-              type="button"
-              @click="modal = 'create'"
-            >
-              <Plus :size="15" />新建棋谱</button
-            ><button
-              v-if="!isTrash && library.counts.all"
-              class="lib-button"
-              type="button"
-              @click="resetFilters"
-            >
-              清除筛选
-            </button>
+            <button v-if="hasConditions" class="workspace-button" type="button" @click="resetFilters"><Undo2 :size="15" />清除筛选</button>
+            <button v-else-if="!isTrash" class="workspace-button primary" type="button" :disabled="busy" @click="fileInput?.click()"><FileUp :size="15" />导入棋谱</button>
+            <button v-if="!hasConditions && !isTrash && library.category === 'all'" class="workspace-button" type="button" :disabled="busy" @click="modal = 'create'"><Plus :size="15" />新建棋谱</button>
           </div>
         </div>
       </section>
-      <RecordPreview
-        v-if="previewVisible && previewRecord"
-        :record="previewRecord"
-        :trash="isTrash"
-        :busy="busy"
-        :collections="library.data.collections"
-        :save-metadata="edit"
-        @close="previewVisible = false"
-        @open="open"
-        @favorite="favorite"
-        @remove="(record) => askDelete([record.id])"
-        @restore="(record) => restore([record.id])"
-        @add-tag="tag"
-        @remove-tag="removeTag"
-        @review="review"
-        @download="(record) => download([record.id])"
-        @collection="
-          (record, ids) =>
-            run(async () => {
-              await library.patch(record.id, { collectionIds: ids })
-            })
-        "
-      />
+      <LibraryPane :visible="previewShown" :drawer="previewDrawer" side="right" label="棋谱详情" @close="closePreview">
+        <RecordPreview :record="previewRecord" :trash="isTrash" :busy="busy" :active="previewShown" :collections="library.data.collections" :save-metadata="edit"
+          @close="closePreview" @open="open" @favorite="favorite" @remove="(record) => askDelete([record.id])" @restore="(record) => restore([record.id])"
+          @add-tag="tag" @remove-tag="removeTag" @review="review" @download="(record) => download([record.id])"
+          @collection="(record, ids) => run(async () => { await library.patch(record.id, { collectionIds: ids }) })" />
+      </LibraryPane>
     </div>
     <div v-if="dragging" class="library-drop-target">
       <FileUp :size="36" /><strong>导入 SGF 棋谱</strong>
@@ -888,7 +567,7 @@ onBeforeUnmount(() => {
       >
         撤销</button
       ><button
-        class="lib-icon"
+        class="workspace-icon"
         type="button"
         aria-label="关闭提示"
         title="关闭"
@@ -940,13 +619,13 @@ onBeforeUnmount(() => {
         <p v-if="error" class="form-error span-two" role="alert">{{ error }}</p>
         <div class="dialog-actions span-two">
           <button
-            class="lib-button"
+            class="workspace-button"
             type="button"
             :disabled="busy"
             @click="modal = null"
           >
             取消</button
-          ><button class="lib-button primary" type="submit" :disabled="busy">
+          ><button class="workspace-button primary" type="submit" :disabled="busy">
             <LoaderCircle v-if="busy" class="spinning" :size="15" />创建并打开
           </button>
         </div>
@@ -968,13 +647,13 @@ onBeforeUnmount(() => {
         <p v-if="error" class="form-error" role="alert">{{ error }}</p>
         <div class="dialog-actions">
           <button
-            class="lib-button"
+            class="workspace-button"
             type="button"
             :disabled="busy"
             @click="modal = null"
           >
             取消</button
-          ><button class="lib-button primary" type="submit" :disabled="busy">
+          ><button class="workspace-button primary" type="submit" :disabled="busy">
             <FolderPlus :size="15" />创建
           </button>
         </div>
@@ -1048,14 +727,14 @@ onBeforeUnmount(() => {
         <div class="dialog-actions">
           <button
             v-if="results.some((result) => result.status === 'error')"
-            class="lib-button"
+            class="workspace-button"
             type="button"
             :disabled="busy"
             @click="fileInput?.click()"
           >
             重新选择文件</button
           ><button
-            class="lib-button"
+            class="workspace-button"
             type="button"
             :disabled="busy"
             @click="modal = null"
@@ -1063,7 +742,7 @@ onBeforeUnmount(() => {
             {{ results.length ? '完成' : '取消' }}</button
           ><button
             v-if="!results.length"
-            class="lib-button primary"
+            class="workspace-button primary"
             type="button"
             :disabled="busy || !importFiles.length"
             @click="startImport"
@@ -1089,14 +768,14 @@ onBeforeUnmount(() => {
         <p v-if="error" class="form-error" role="alert">{{ error }}</p>
         <div class="dialog-actions">
           <button
-            class="lib-button"
+            class="workspace-button"
             type="button"
             :disabled="busy"
             @click="modal = null"
           >
             取消</button
           ><button
-            class="lib-button danger-action"
+            class="workspace-button danger-action"
             type="button"
             :disabled="busy"
             @click="confirmDelete"
@@ -1143,13 +822,13 @@ onBeforeUnmount(() => {
         <p v-if="error" class="form-error" role="alert">{{ error }}</p>
         <div class="dialog-actions">
           <button
-            class="lib-button"
+            class="workspace-button"
             type="button"
             :disabled="busy"
             @click="modal = null"
           >
             取消</button
-          ><button class="lib-button primary" type="submit" :disabled="busy">
+          ><button class="workspace-button primary" type="submit" :disabled="busy">
             保存
           </button>
         </div>
@@ -1167,14 +846,14 @@ onBeforeUnmount(() => {
         <p v-if="error" class="form-error" role="alert">{{ error }}</p>
         <div class="dialog-actions">
           <button
-            class="lib-button"
+            class="workspace-button"
             type="button"
             :disabled="busy"
             @click="modal = null"
           >
             取消</button
           ><button
-            class="lib-button primary"
+            class="workspace-button primary"
             type="button"
             :disabled="busy"
             @click="restoreBackup"
@@ -1184,9 +863,19 @@ onBeforeUnmount(() => {
         </div>
       </div></LibraryDialog
     >
-    <LibraryDialog v-if="modal === 'switch-research'" title="当前研究尚未保存" :busy="busy" @close="modal = null"><div class="confirmation-content"><p>打开另一份棋谱前，是否保存当前研究？</p><p v-if="error" class="form-error" role="alert">{{ error }}</p><div class="dialog-actions"><button class="lib-button" type="button" :disabled="busy" @click="modal = null">取消</button><button class="lib-button" type="button" :disabled="busy" @click="continueOpen(false)">放弃并打开</button><button class="lib-button primary" type="button" :disabled="busy" @click="continueOpen(true)">保存并打开</button></div></div></LibraryDialog>
-    <LibraryDialog v-if="modal === 'manage-collection' && managedCollection" title="管理棋谱集" :busy="busy" @close="modal = null"><form class="lib-form single" @submit.prevent="renameCollection"><label>名称<input v-model="managedCollection.name" required maxlength="80" /></label><p v-if="error" class="form-error" role="alert">{{ error }}</p><div class="dialog-actions"><button class="lib-button" type="button" :disabled="busy" @click="removeCollection">移除棋谱集</button><button class="lib-button" type="button" :disabled="busy" @click="modal = null">取消</button><button class="lib-button primary" type="submit" :disabled="busy">保存</button></div></form></LibraryDialog>
+    <LibraryDialog v-if="modal === 'switch-research'" title="当前研究尚未保存" :busy="busy" @close="modal = null"><div class="confirmation-content"><p>打开另一份棋谱前，是否保存当前研究？</p><p v-if="error" class="form-error" role="alert">{{ error }}</p><div class="dialog-actions"><button class="workspace-button" type="button" :disabled="busy" @click="modal = null">取消</button><button class="workspace-button" type="button" :disabled="busy" @click="continueOpen(false)">放弃并打开</button><button class="workspace-button primary" type="button" :disabled="busy" @click="continueOpen(true)">保存并打开</button></div></div></LibraryDialog>
+    <LibraryDialog v-if="modal === 'manage-collection' && managedCollection" title="管理棋谱集" :busy="busy" @close="modal = null"><form class="lib-form single" @submit.prevent="renameCollection"><label>名称<input v-model="managedCollection.name" required maxlength="80" /></label><p v-if="error" class="form-error" role="alert">{{ error }}</p><div class="dialog-actions"><button class="workspace-button" type="button" :disabled="busy" @click="removeCollection">移除棋谱集</button><button class="workspace-button" type="button" :disabled="busy" @click="modal = null">取消</button><button class="workspace-button primary" type="submit" :disabled="busy">保存</button></div></form></LibraryDialog>
   </main>
 </template>
 
+<style scoped>
+.library-workspace {
+  background-color: var(--shell);
+  background-image: linear-gradient(rgba(243, 242, 241, 0.22), rgba(243, 242, 241, 0.22)), url('/home-background.png');
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+</style>
 <style src="../components/library/library.css"></style>

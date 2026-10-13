@@ -56,7 +56,7 @@ const panelId = `${props.idPrefix}-panel`
 </script>
 
 <template>
-  <aside class="game-sidebar sidebar-shell" :aria-label="label">
+  <aside class="game-sidebar sidebar-shell workspace-surface" :aria-label="label">
     <div class="sidebar-tabs" role="tablist" :aria-label="`${title}分类`">
       <button
         v-for="(tab, index) in tabs"
@@ -98,9 +98,6 @@ const panelId = `${props.idPrefix}-panel`
   flex-direction: column;
   overflow: hidden;
   border-left: 1px solid var(--border);
-  background: rgba(255, 255, 255, .76);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
 }
 
 .sidebar-tabs {

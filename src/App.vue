@@ -5,13 +5,17 @@ import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { isTauri } from '@tauri-apps/api/core'
 import { getEngineStatus, warmupEngine, type EngineStatus } from './services/katago'
+import { useLibraryStore } from './stores/library'
 
 const route = useRoute()
 const router = useRouter()
+const library = useLibraryStore()
 const isHome = computed(() => route.name === 'mode-select')
+const isLibrary = computed(() => route.name === 'library')
 const desktopRuntime = isTauri()
 const browserDevelopment = import.meta.env.DEV && !desktopRuntime
 const isPlaying = computed(() => route.name === 'play-human' || route.name === 'play-ai' || route.name === 'play-lan' || route.name === 'research')
+const isWorkspace = computed(() => isPlaying.value || isLibrary.value)
 const isLanGame = computed(() => route.name === 'play-lan')
 const immersiveEnabled = ref(false)
 const leaveConfirmVisible = ref(false)
@@ -153,7 +157,7 @@ onBeforeUnmount(() => {
 })
 
 function openGameSettings() {
-  if (route.name === 'research') {
+  if (route.name === 'research' || isLibrary.value) {
     router.push({ name: 'settings' })
     return
   }
@@ -215,7 +219,7 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
   </div>
 
   <div v-else class="app-shell" :class="{ home: isHome, immersive: isPlaying && immersiveEnabled }">
-    <header class="app-header" :class="{ playing: isPlaying, 'home-header': isHome }">
+    <header class="app-header" :class="{ playing: isPlaying, 'workspace-header': isWorkspace, 'home-header': isHome }">
       <div class="brand">
         <img class="brand-logo" src="/logo.png?v=2" alt="时光围棋 Logo" />
         <div class="brand-copy"><strong>时光围棋</strong></div>
@@ -233,8 +237,8 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
           </button>
         </div>
       </div>
-      <div v-if="isPlaying" class="header-actions">
-        <div class="playing-summary" :title="playingSummary.statusTitle" aria-label="当前对局摘要">
+      <div v-if="isWorkspace" class="header-actions">
+        <div v-if="isPlaying" class="playing-summary" :title="playingSummary.statusTitle" aria-label="当前对局摘要">
           <div class="playing-summary-copy">
             <strong>{{ playingSummary.primary }}</strong>
             <span v-if="playingSummary.secondary">{{ playingSummary.secondary }}</span>
@@ -244,11 +248,14 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
             {{ playingSummary.status }}
           </span>
         </div>
+        <div v-else class="playing-summary" aria-label="棋谱库摘要">
+          <div class="playing-summary-copy"><strong>棋谱库</strong><span>{{ library.counts.all }} 局</span></div>
+        </div>
         <div class="playing-action-buttons">
-          <button class="header-settings board-back" type="button" :aria-label="isLanGame ? '返回局域网房间' : '返回主界面'" :title="isLanGame ? '返回局域网房间' : '返回主界面'" @click="requestLeaveGame">
+          <button class="header-settings board-back" type="button" :aria-label="isLanGame ? '返回局域网房间' : '返回主界面'" :title="isLanGame ? '返回局域网房间' : '返回主界面'" @click="isPlaying ? requestLeaveGame() : router.push({ name: 'mode-select' })">
             <House :size="20" aria-hidden="true" />
           </button>
-          <button class="header-settings" type="button" aria-label="打开对局设置" title="对局设置" @click="openGameSettings">
+          <button class="header-settings" type="button" :aria-label="isPlaying ? '打开对局设置' : '打开设置'" :title="isPlaying ? '对局设置' : '设置'" @click="openGameSettings">
             <Settings :size="20" />
           </button>
         </div>
@@ -295,7 +302,7 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
 
 .app-shell { display: flex; width: 100%; height: 100vh; min-height: 0; flex-direction: column; overflow: hidden; }
 .app-header { z-index: 5; display: grid; height: 56px; flex: 0 0 56px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; padding: 0 22px; border-bottom: 1px solid var(--border); background: #fff; }
-.app-header.playing { grid-template-columns: 1fr auto; }
+.app-header.workspace-header { grid-template-columns: 1fr auto; }
 .brand { display: flex; min-width: 0; align-items: center; gap: 10px; }
 .brand-logo { display: block; width: 32px; height: 32px; object-fit: contain; }
 .brand div { display: flex; align-items: baseline; }
@@ -354,7 +361,7 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
 @media (max-width: 760px) { .home-header { gap: 10px; padding-inline: 14px; }.home-header-right { gap: 10px; }.home-footer { padding-inline: 14px; } }
 @media (max-width: 440px) { .home-header { position: relative; } .home-header-right { width: auto; min-width: 0; gap: 0; } .home-header-actions { position: absolute; top: 10px; right: 16px; width: auto; } .home-nav-button { color: #323130; background: rgba(255,255,255,.4); } .home-footer { height: 44px; flex-basis: 44px; font-size: 10px; } .home-footer-runtime { gap: 8px; } .home-engine-status { font-size: 10px; } }
 @media (prefers-reduced-motion: reduce) { .home-engine-retry .spin { animation: none; } }
-.app-header.playing {
+.app-header.workspace-header {
   grid-template-columns: minmax(0, 1fr) auto;
   border-bottom-color: rgba(225, 225, 225, 0.65);
   padding-inline: 18px;
@@ -370,7 +377,7 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
   background-repeat: no-repeat;
   background-size: cover;
 }
-.app-header.playing .header-settings {
+.app-header.workspace-header .header-settings {
   width: 40px;
   height: 40px;
   border-color: transparent;
@@ -378,14 +385,14 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
   box-shadow: none;
   transition: border-color 150ms ease-out, color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out, transform 150ms ease-out;
 }
-.app-header.playing .header-settings:hover {
+.app-header.workspace-header .header-settings:hover {
   border-color: rgba(255, 255, 255, 0.6);
   color: var(--accent-strong);
   background: rgba(255, 255, 255, 0.7);
   box-shadow: var(--shadow-sm);
 }
-.app-header.playing .header-settings:active { transform: scale(0.97); box-shadow: none; }
-.app-header.playing .header-settings:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: 0 0 0 4px rgba(243, 242, 241, 0.9), 0 0 0 6px var(--accent); }
+.app-header.workspace-header .header-settings:active { transform: scale(0.97); box-shadow: none; }
+.app-header.workspace-header .header-settings:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: 0 0 0 4px rgba(243, 242, 241, 0.9), 0 0 0 6px var(--accent); }
 .playing-action-buttons { display: flex; align-items: center; gap: 8px; }
 .playing-summary { display: flex; min-width: 0; max-width: min(440px, 42vw); flex-wrap: nowrap; align-items: center; gap: 16px; padding: 5px 14px 5px 4px; border-right: 1px solid rgba(225, 225, 225, 0.72); white-space: nowrap; }
 .playing-summary-copy { display: flex; min-width: 0; flex: 1 1 auto; align-items: center; gap: 8px; }
@@ -422,11 +429,12 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
   .playing-summary { max-width: 112px; }
   .playing-summary-copy strong { font-size: 11px; }
   .playing-action-buttons { gap: 3px; }
-  .app-header.playing { padding-inline: 10px; }
+  .app-header.workspace-header { padding-inline: 10px; }
 }
 @media (max-width: 520px) { .leave-confirm-backdrop { padding: 14px; }.leave-confirm-body { padding-inline: 28px; }.leave-confirm-body h2 { font-size: 20px; }.leave-confirm-actions { padding-right: 18px; padding-bottom: 18px; } }
 
-.app-shell.immersive .app-header.playing {
+.app-shell.immersive .app-header.workspace-header {
   display: none;
 }
 </style>
+<style src="./components/workspace/workspace.css"></style>

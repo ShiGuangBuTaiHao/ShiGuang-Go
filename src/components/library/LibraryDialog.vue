@@ -32,7 +32,7 @@ onBeforeUnmount(() => {
     <div class="dialog-heading">
       <h2 id="library-dialog-title">{{ title }}</h2>
       <button
-        class="lib-icon"
+        class="workspace-icon"
         type="button"
         title="关闭"
         aria-label="关闭"
@@ -52,11 +52,13 @@ onBeforeUnmount(() => {
   max-height: calc(100dvh - 48px);
   padding: 0;
   overflow: auto;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   color: var(--text);
-  background: var(--surface);
-  box-shadow: var(--shadow-md);
+  background: rgba(var(--surface-rgb), 0.95);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  box-shadow: var(--shadow-lg);
   font: inherit;
 }
 .library-dialog.wide {
@@ -64,7 +66,8 @@ onBeforeUnmount(() => {
 }
 .library-dialog::backdrop {
   background: rgba(50, 49, 48, 0.36);
-  backdrop-filter: blur(3px);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }
 .dialog-heading {
   display: flex;
@@ -72,7 +75,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 16px;
   padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 .dialog-heading h2 {
   margin: 0;

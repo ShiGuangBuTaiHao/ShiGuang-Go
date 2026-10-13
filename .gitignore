@@ -14,9 +14,11 @@ output/
 .revert-backup/
 *.local
 
+# Local AI assistant memory and plans
+/.claude/
+
 # Editor directories and files
-.vscode/*
-!.vscode/extensions.json
+/.vscode/
 .idea
 .DS_Store
 *.suo
@@ -49,3 +51,10 @@ src-tauri/resources/katago-estimate/*.zip
 src-tauri/resources/katago-human/*.bin.gz
 analysis_logs/
 gtp_logs/
+
+# Unused engine examples and contribution-mode certificates
+src-tauri/resources/katago*/contribute_example.cfg
+src-tauri/resources/katago*/match_example.cfg
+src-tauri/resources/katago*/gtp_human5k_example.cfg
+src-tauri/resources/katago*/gtp_human9d_search_example.cfg
+src-tauri/resources/katago*/cacert.pem

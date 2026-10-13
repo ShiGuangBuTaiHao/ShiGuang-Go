@@ -1,0 +1,65 @@
+.workspace-toolbar {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(243, 242, 241, .2);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+.workspace-icon {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--muted);
+  background: transparent;
+  transition: border-color 150ms ease-out, color 150ms ease-out, background-color 150ms ease-out;
+}
+.workspace-icon:hover:not(:disabled) {
+  border-color: var(--accent-16);
+  color: var(--accent-strong);
+  background: rgba(255, 255, 255, .72);
+}
+.workspace-icon.selected {
+  border-color: var(--accent-16);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+.workspace-icon:disabled { opacity: .35; }
+.workspace-button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  background: rgba(255, 255, 255, .72);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  transition: border-color 150ms ease-out, color 150ms ease-out, background-color 150ms ease-out;
+}
+.workspace-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft); }
+.workspace-button.primary { border-color: var(--accent); color: var(--surface); background: var(--accent); }
+.workspace-button.primary:hover:not(:disabled) { color: var(--surface); background: var(--accent-strong); }
+.workspace-button.danger { color: var(--danger); }
+.workspace-button.danger-action { border-color: var(--danger); color: var(--surface); background: var(--danger); }
+.workspace-button.danger-action:hover:not(:disabled) { color: var(--surface); background: var(--danger); }
+.workspace-button:disabled { opacity: .5; }
+.workspace-surface {
+  background: rgba(255, 255, 255, .76);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
