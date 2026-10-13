@@ -287,7 +287,7 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
       </section>
     </div>
     <footer v-if="isHome" class="home-footer" aria-label="大厅状态">
-      <span class="home-footer-version">v1.0.0</span>
+      <span class="home-footer-version">v1.1.0</span>
       <span class="home-footer-runtime">
         <span>本地运行 · KataGo</span>
         <span class="home-engine-status" :class="{ ready: engineStatus && isReady(engineStatus), error: engineStatus?.error || engineStatus?.configured === false }" role="status" :title="engineStatus?.error ?? engineStatus?.detail ?? 'KataGo 本地引擎仅在桌面端可用'">

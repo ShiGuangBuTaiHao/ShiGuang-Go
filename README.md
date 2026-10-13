@@ -2,9 +2,9 @@
 
 [中文](README.md) | [English](README.en.md)
 
-> 一个面向 Windows 桌面端的本地 AI 围棋应用。当前版本为 `1.0.0`。
+> 一个面向 Windows 桌面端的本地 AI 围棋应用。当前版本为 `1.1.0`。
 
-Windows x64 完整安装包已提供，下载见 [GitHub v1.0.0 发行页](https://github.com/ShiGuangBuTaiHao/ShiGuang-Go/releases/tag/v1.0.0)，更新内容见 [v1.0.0 发行说明](RELEASE_NOTES.md)。请先核对发行页的校验文件与设备要求；目前重点验证 RTX 4060 Laptop GPU（`sm89`），安装包未签名，许可核对和干净环境安装验证尚未全部完成。
+Windows x64 完整安装包已提供，下载见 [GitHub v1.1.0 发行页](https://github.com/ShiGuangBuTaiHao/ShiGuang-Go/releases/tag/v1.1.0)，更新内容见 [v1.1.0 发行说明](RELEASE_NOTES.md)。请先核对发行页的校验文件与设备要求；目前重点验证 RTX 4060 Laptop GPU（`sm89`），安装包未签名，许可核对和干净环境安装验证尚未全部完成。
 
 ## 产品介绍
 

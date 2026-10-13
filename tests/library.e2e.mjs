@@ -49,7 +49,7 @@ try {
       const style = getComputedStyle(element)
       return { display: style.display, background: style.backgroundColor, radius: style.borderRadius }
     }), { display: 'flex', background: 'rgb(0, 120, 212)', radius: '5px' })
-    assert.equal(await page.locator('.library-navigation').evaluate(element => getComputedStyle(element).backdropFilter), 'blur(14px)')
+    assert.equal(await page.getByRole('navigation', { name: '棋谱分类', exact: true }).count(), 1)
     await screenshot('library-empty')
   })
   await step('SGF import and preview playback', async () => {

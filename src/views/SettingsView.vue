@@ -29,7 +29,7 @@ function resetSettings() {
         <section id="analysis" class="settings-section"><div class="settings-section-heading"><span class="section-kicker">分析引擎</span><h2>KataGo 本地服务</h2></div><div class="diagnostic-row"><div><strong>当前运行时</strong><small>使用应用内置的 KataGo 与模型资源</small></div><span class="diagnostic-status"><i />已配置</span></div><div class="diagnostic-row"><div><strong>快速分析</strong><small>用于推荐落点和人机对局</small></div><span class="value-label">按需调用</span></div></section>
         <section id="appearance" class="settings-section"><div class="settings-section-heading"><span class="section-kicker">外观</span><h2>保持专注</h2></div><label class="setting-row"><span><strong>跟随系统主题</strong><small>当前桌面端默认使用浅色工作区</small></span><input v-model="followSystem" type="checkbox" /></label></section>
         <button class="reset-button" type="button" @click="resetSettings"><RotateCcw :size="15" />恢复默认设置</button>
-        <footer class="settings-about" aria-label="软件信息"><span>时光围棋 v1.0.0</span><span>KataGo · 本地 TensorRT 引擎</span></footer>
+        <footer class="settings-about" aria-label="软件信息"><span>时光围棋 v1.1.0</span><span>KataGo · 本地 TensorRT 引擎</span></footer>
       </div>
     </section>
   </main>
