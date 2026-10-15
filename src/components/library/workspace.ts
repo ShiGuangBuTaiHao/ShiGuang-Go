@@ -36,6 +36,14 @@ export function filterLibraryRecords(records: LibraryRecord[], category: string,
   }).sort((a, b) => value(a).localeCompare(value(b), 'zh-CN', { numeric: true }) * (ascending ? 1 : -1))
 }
 
+export function preserveRecordOrder(records: LibraryRecord[], order: string[]) {
+  const rank = new Map(order.map((id, index) => [id, index]))
+  const existing = records.filter(record => rank.has(record.id))
+    .sort((a, b) => rank.get(a.id)! - rank.get(b.id)!)
+  const newRecords = records.filter(record => !rank.has(record.id))
+  return [...newRecords, ...existing]
+}
+
 export function pageCount(total: number) {
   return Math.max(1, Math.ceil(total / LIBRARY_PAGE_SIZE))
 }

@@ -174,9 +174,9 @@ export function researchGraph(tree: ResearchTree): VariationGraph {
     const entry = pending.pop()!
     const node = tree.nodes[entry.id]
     const row = entry.lane < 0 ? ++lane : entry.lane
-    graph.nodes.push({ id: node.id, x: 22 + entry.depth * 38, y: 24 + row * 38, label: node.move ? String(node.snapshot.moveNumber) : '·', stone: node.move?.stone ?? null, current: node.id === tree.currentNodeId, onPath: path.has(node.id), comment: Boolean(node.comment) })
-    graph.width = Math.max(graph.width, 44 + entry.depth * 38)
-    graph.height = Math.max(graph.height, 48 + row * 38)
+    graph.nodes.push({ id: node.id, x: 24 + row * 72, y: 24 + entry.depth * 56, label: node.move ? String(node.snapshot.moveNumber) : '·', stone: node.move?.stone ?? null, current: node.id === tree.currentNodeId, onPath: path.has(node.id), comment: Boolean(node.comment) })
+    graph.width = Math.max(graph.width, 72 + row * 72)
+    graph.height = Math.max(graph.height, 48 + entry.depth * 56)
     for (let index = node.children.length - 1; index >= 0; index -= 1) {
       const child = node.children[index]
       graph.edges.push({ from: node.id, to: child, active: path.has(child) })

@@ -39,6 +39,11 @@ button:not(:disabled) { cursor: pointer; }
 button:focus-visible, [role='button']:focus-visible { outline: 2px solid #0078d4; outline-offset: 2px; box-shadow: 0 0 0 4px #f3f2f1, 0 0 0 6px #0078d4; }
 button:disabled { cursor: not-allowed; }
 button, input, select { font: inherit; }
+select {
+  min-height: 36px;
+  padding: 0 10px;
+  font-size: 12px;
+}
 input:not([type='checkbox'], [type='radio'], [type='range'], [type='button'], [type='submit'], [type='reset'], [type='color'], [type='file'], [type='hidden'], [type='search']), textarea, select {
   min-width: 0;
   border: 1px solid var(--border);
@@ -65,9 +70,14 @@ input:not([type='checkbox'], [type='radio'], [type='range'], [type='button'], [t
   opacity: 1;
 }
 ::selection { color: var(--text); background: rgba(var(--accent-rgb), .18); }
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 999px; background: #c8d0ca; background-clip: padding-box; }
-::-webkit-scrollbar-thumb:hover { background: #aebbb1; background-clip: padding-box; }
+*::-webkit-scrollbar { width: 4px !important; height: 4px !important; }
+*::-webkit-scrollbar-track { background: transparent !important; }
+*::-webkit-scrollbar-thumb { -webkit-appearance: none !important; appearance: none !important; border: 0 !important; border-radius: 999px !important; background: #0078d4 !important; background-color: #0078d4 !important; background-clip: border-box !important; opacity: 1 !important; filter: none !important; box-shadow: none !important; transition: none !important; }
+html body *::-webkit-scrollbar-thumb:hover,
+html body *::-webkit-scrollbar-thumb:active { -webkit-appearance: none !important; appearance: none !important; background: #0078d4 !important; background-color: #0078d4 !important; opacity: 1 !important; filter: none !important; box-shadow: none !important; }
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: #0078d4 transparent; }
+}
 
 /* Shared board workspace used by human, AI, and LAN games. */
 .workspace {

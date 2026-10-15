@@ -16,7 +16,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   dialog.value?.close()
-  previousFocus?.focus()
+  if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
 })
 </script>
 

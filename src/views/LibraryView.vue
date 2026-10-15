@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, toRefs, watch } from 'vue'
 import {
+  CircleAlert,
   Check,
   Download,
   FileUp,
@@ -23,10 +24,14 @@ import RecordPreview from '../components/library/RecordPreview.vue'
 import LibraryDialog from '../components/library/LibraryDialog.vue'
 import LibraryToolbar from '../components/library/LibraryToolbar.vue'
 import LibraryPane from '../components/library/LibraryPane.vue'
-import { filterChips, filterLibraryRecords, pageCount, type FilterKey } from '../components/library/workspace'
+import GameSettingsDialog from '../components/game/GameSettingsDialog.vue'
+import DatePicker from '../components/ui/DatePicker.vue'
+import { filterChips, filterLibraryRecords, pageCount, preserveRecordOrder, type FilterKey } from '../components/library/workspace'
 import { useLibraryStore } from '../stores/library'
 import { useResearchStore } from '../stores/research'
 import { komiFor } from '../domain/gameSetup'
+import { loadBoardStyle, saveBoardStyle } from '../domain/boardTheme'
+import { loadLibraryDisplaySettings, saveLibraryDisplaySettings } from '../domain/viewSettings'
 import {
   REVIEW_LABELS,
   type ImportResult,
@@ -47,7 +52,12 @@ const router = useRouter(),
   research = useResearchStore()
 const fileInput = ref<HTMLInputElement | null>(null),
   backupInput = ref<HTMLInputElement | null>(null)
-const { sidebarVisible, previewVisible, filtersVisible, view, page, sort, ascending, sizeFilter, sourceFilter, reviewFilter, fromDate, toDate } = toRefs(library.ui)
+const savedDisplaySettings = loadLibraryDisplaySettings()
+const settingsOpen = ref(false)
+const coordinatesVisible = ref(savedDisplaySettings.coordinates)
+const moveNumbersVisible = ref(savedDisplaySettings.moveNumbers)
+const boardStyle = ref(loadBoardStyle())
+const { sidebarVisible, previewVisible, view, page, sort, ascending, sizeFilter, sourceFilter, reviewFilter, fromDate, toDate } = toRefs(library.ui)
 const viewportWidth = ref(window.innerWidth)
 const navigationDrawer = computed(() => viewportWidth.value < 900)
 const previewDrawer = computed(() => viewportWidth.value < 1280)
@@ -55,7 +65,38 @@ const navigationDrawerOpen = ref(false), previewDrawerOpen = ref(false)
 const navigationShown = computed(() => navigationDrawer.value ? navigationDrawerOpen.value : sidebarVisible.value)
 const previewShown = computed(() => previewDrawer.value ? previewDrawerOpen.value : previewVisible.value)
 const backupMenu = ref<HTMLDetailsElement | null>(null)
+const backupMenuPopup = ref<HTMLElement | null>(null)
+const backupMenuOpen = ref(false)
+const backupMenuPosition = ref({ left: 0, top: 0 })
+async function syncBackupMenu() {
+  const menu = backupMenu.value
+  backupMenuOpen.value = Boolean(menu?.open)
+  if (!menu?.open) return
+  await nextTick()
+  if (!menu.open) return
+  const anchor = menu.querySelector('summary')?.getBoundingClientRect()
+  if (!anchor) return
+  const width = backupMenuPopup.value?.offsetWidth ?? 140
+  const height = backupMenuPopup.value?.offsetHeight ?? 104
+  backupMenuPosition.value = {
+    left: Math.max(12, Math.min(anchor.right - width, window.innerWidth - width - 12)),
+    top: anchor.bottom + height + 8 > window.innerHeight
+      ? Math.max(12, anchor.top - height - 8)
+      : anchor.bottom + 8,
+  }
+}
+function closeBackupMenu() {
+  backupMenu.value?.removeAttribute('open')
+  backupMenuOpen.value = false
+}
+function openBackupPicker() {
+  closeBackupMenu()
+  backupInput.value?.click()
+}
 function resizeWorkspace() { viewportWidth.value = window.innerWidth }
+function openSettings() { settingsOpen.value = true }
+watch([coordinatesVisible, moveNumbersVisible], () => saveLibraryDisplaySettings({ coordinates: coordinatesVisible.value, moveNumbers: moveNumbersVisible.value }))
+watch(boardStyle, saveBoardStyle)
 function closeNavigation() { if (navigationDrawer.value) navigationDrawerOpen.value = false; else sidebarVisible.value = false }
 function closePreview() { if (previewDrawer.value) previewDrawerOpen.value = false; else previewVisible.value = false }
 const modal = ref<
@@ -72,12 +113,17 @@ const modal = ref<
 const busy = ref(false),
   error = ref(''),
   toast = ref(''),
+  toastType = ref<'success' | 'error'>('success'),
+  toastElement = ref<HTMLElement | null>(null),
   dragging = ref(false),
   dragDepth = ref(0),
   results = ref<ImportResult[]>([]),
   importingName = ref(''),
   completed = ref(0),
   total = ref(0)
+const savingRecordIds = ref<string[]>([])
+const recordWrites = new Map<string, Promise<void>>()
+const workspaceBusy = computed(() => busy.value && !modal.value)
 const collectionName = ref(''),
   batchTag = ref(''),
   batchCollection = ref(''),
@@ -141,9 +187,8 @@ const heading = computed(
   () =>
     ({
       all: '全部棋谱',
-      recent: '最近打开',
+      recent: '历史对局',
       favorites: '我的收藏',
-      pending: '待复盘',
       trash: '回收站',
     })[library.category] ??
     library.data.collections.find(
@@ -154,14 +199,19 @@ const heading = computed(
       : '全部棋谱'),
 )
 const filters = computed(() => ({ sizeFilter: sizeFilter.value, sourceFilter: sourceFilter.value, reviewFilter: reviewFilter.value, fromDate: fromDate.value, toDate: toDate.value }))
-const filtered = computed(() => filterLibraryRecords(library.visibleRecords, library.category, filters.value, sort.value, ascending.value))
+const stableRecordOrder = ref<string[] | null>(null)
+const filtered = computed(() => {
+  const records = filterLibraryRecords(library.visibleRecords, library.category, filters.value, sort.value, ascending.value)
+  return stableRecordOrder.value ? preserveRecordOrder(records, stableRecordOrder.value) : records
+})
+const gridSelectedCount = computed(() => filtered.value.filter(record => library.selectedIds.includes(record.id)).length)
+const allGridSelected = computed(() => filtered.value.length > 0 && gridSelectedCount.value === filtered.value.length)
 const hasConditions = computed(() => Boolean(library.query.trim() || filterChips(filters.value).length))
 const emptyTitle = computed(() => {
   if (hasConditions.value) return '没有符合条件的棋谱'
   if (library.category === 'trash') return '回收站为空'
   if (library.category === 'favorites') return '暂无收藏棋谱'
-  if (library.category === 'recent') return '暂无最近打开的棋谱'
-  if (library.category === 'pending') return '暂无待复盘棋谱'
+  if (library.category === 'recent') return '暂无历史对局'
   if (library.category.startsWith('collection-')) return '棋谱集为空'
   if (library.category.startsWith('tag:')) return '此标签下暂无棋谱'
   return '暂无棋谱'
@@ -190,6 +240,7 @@ watch(
     toDate,
   ],
   () => {
+    stableRecordOrder.value = null
     page.value = 1
     library.ui.scrollTop = 0
     library.selectedIds = []
@@ -198,29 +249,44 @@ watch(
 watch(filtered, records => {
   page.value = Math.max(1, Math.min(page.value, pageCount(records.length)))
   const ids = new Set(records.map(record => record.id))
-  library.selectedIds = library.selectedIds.filter(id => ids.has(id))
+  const selectedIds = library.selectedIds.filter(id => ids.has(id))
+  if (selectedIds.length !== library.selectedIds.length) library.selectedIds = selectedIds
   if (library.selectedId && !ids.has(library.selectedId)) library.selectedId = null
 })
-watch([sort, ascending, view, page], () => { library.ui.scrollTop = 0 })
-watch([sort, ascending], () => { page.value = 1 })
+watch([sort, ascending, view], () => { library.ui.scrollTop = 0 })
+watch([sort, ascending], () => { stableRecordOrder.value = null; page.value = 1 })
 watch(navigationDrawer, () => { navigationDrawerOpen.value = false })
 watch(previewDrawer, () => { previewDrawerOpen.value = false })
-function notify(message: string) {
+function notify(message: string, type: 'success' | 'error' = 'success') {
   toast.value = message
+  toastType.value = type
   if (toastTimer) clearTimeout(toastTimer)
   toastTimer = setTimeout(() => {
     toast.value = ''
   }, 5000)
 }
-function clearError() { error.value = ''; library.error = '' }
-async function run(task: () => Promise<void>) {
+watch(toast, (message) => {
+  const element = toastElement.value as (HTMLElement & { showPopover?: () => void; hidePopover?: () => void }) | null
+  if (message) element?.showPopover?.()
+  else element?.hidePopover?.()
+}, { flush: 'post' })
+watch(() => library.error, (message) => {
+  if (message) notify(message, 'error')
+})
+function preserveVisibleOrder() {
+  if (!stableRecordOrder.value) stableRecordOrder.value = filtered.value.map(record => record.id)
+}
+async function run(task: () => Promise<void>, preserveOrder = true) {
   if (busy.value) return
+  if (preserveOrder) preserveVisibleOrder()
   busy.value = true
   error.value = ''
   try {
+    await Promise.all(recordWrites.values())
     await task()
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause)
+    notify(error.value, 'error')
   } finally {
     busy.value = false
   }
@@ -245,10 +311,16 @@ function toggle(id: string) {
     ? library.selectedIds.filter((value) => value !== id)
     : [...library.selectedIds, id]
 }
+function openBatch(ids = library.selectedIds) {
+  if (busy.value || isTrash.value || !ids.length) return
+  library.selectedIds = [...ids]
+  batchTag.value = ''
+  batchCollection.value = ''
+  batchState.value = ''
+  modal.value = 'batch'
+}
 function toggleAll() {
-  library.selectedIds = filtered.value.every((record) =>
-    library.selectedIds.includes(record.id),
-  )
+  library.selectedIds = allGridSelected.value
     ? []
     : filtered.value.map((record) => record.id)
 }
@@ -272,7 +344,7 @@ function chooseFiles(files: File[]) {
   importFiles.value = files.filter((file) =>
     file.name.toLowerCase().endsWith('.sgf'),
   )
-  if (!importFiles.value.length) { error.value = '请选择 SGF 棋谱文件'; return }
+  if (!importFiles.value.length) { error.value = '请选择 SGF 棋谱文件'; notify(error.value, 'error'); return }
   results.value = []
   completed.value = 0
   total.value = importFiles.value.length
@@ -355,33 +427,40 @@ async function continueOpen(save: boolean) {
   })
 }
 function favorite(record: LibraryRecord) {
-  void run(async () => {
-    await library.patch(record.id, { favorite: !record.favorite })
+  void patchRecord(record, { favorite: !record.favorite })
+}
+async function patchRecord(record: LibraryRecord, patch: Partial<LibraryRecord>) {
+  if (busy.value || recordWrites.has(record.id)) return
+  preserveVisibleOrder()
+  savingRecordIds.value = [...savingRecordIds.value, record.id]
+  // Inline saves must not disable and repaint every control in the workspace.
+  const task = Promise.resolve().then(async () => {
+    try {
+      await library.patch(record.id, patch)
+    } catch (cause) {
+      notify(cause instanceof Error ? cause.message : String(cause), 'error')
+    } finally {
+      recordWrites.delete(record.id)
+      savingRecordIds.value = savingRecordIds.value.filter(id => id !== record.id)
+    }
   })
+  recordWrites.set(record.id, task)
+  await task
 }
 async function edit(record: LibraryRecord) {
+  preserveVisibleOrder()
+  await recordWrites.get(record.id)
   await library.editMetadata(record.id, record)
   notify('棋谱信息已保存')
 }
 function tag(record: LibraryRecord, value: string) {
-  void run(async () => {
-    await library.patch(record.id, {
-      tags: [...new Set([...record.tags, value])],
-    })
-  })
+  void patchRecord(record, { tags: [...new Set([...record.tags, value])] })
 }
 function removeTag(record: LibraryRecord, value: string) {
-  void run(async () => {
-    await library.patch(record.id, {
-      tags: record.tags.filter((tag) => tag !== value),
-    })
-  })
+  void patchRecord(record, { tags: record.tags.filter(tag => tag !== value) })
 }
 function review(record: LibraryRecord, state: ReviewState) {
-  void run(async () => {
-    await library.patch(record.id, { reviewState: state })
-    notify('复盘状态已更新')
-  })
+  void patchRecord(record, { reviewState: state })
 }
 function askDelete(ids: string[]) {
   deleteIds.value = ids
@@ -401,6 +480,12 @@ function restore(ids: string[]) {
     await library.restore(ids)
     lastDeleted.value = []
     notify('棋谱已恢复')
+  })
+}
+function saveHistoryRecord(id: string) {
+  void run(async () => {
+    await library.saveHistory(id)
+    notify('已保存到全部棋谱')
   })
 }
 async function createCollection() {
@@ -431,16 +516,16 @@ function download(ids: string[]) {
       library.data.records.filter((record) => ids.includes(record.id)),
     )
     if (saved) notify('已导出 SGF')
-  })
+  }, false)
 }
 function backup() {
-  backupMenu.value?.removeAttribute('open')
+  closeBackupMenu()
   void run(async () => {
     if (await exportLibraryBackup(library.data)) notify('棋谱库备份已导出')
-  })
+  }, false)
 }
 function chooseBackup(event: Event) {
-  backupMenu.value?.removeAttribute('open')
+  closeBackupMenu()
   const input = event.target as HTMLInputElement
   pendingBackup.value = input.files?.[0] ?? null
   input.value = ''
@@ -476,6 +561,7 @@ function dragLeave() {
 }
 onMounted(async () => {
   window.addEventListener('resize', resizeWorkspace)
+  window.addEventListener('open-workspace-settings', openSettings)
   await library.init()
   if (isTauri() && !unmounted) {
     try { const stop = await getCurrentWebview().onDragDropEvent((event) => {
@@ -488,11 +574,12 @@ onMounted(async () => {
         void run(async () => chooseFiles(await readNativeSgfFiles(paths)))
       } else dragging.value = false
     }); if (unmounted) stop(); else stopDrop = stop }
-    catch (cause) { error.value = `拖入文件不可用，请通过导入按钮选择文件：${String(cause)}` }
+    catch (cause) { error.value = `拖入文件不可用，请通过导入按钮选择文件：${String(cause)}`; notify(error.value, 'error') }
   }
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', resizeWorkspace)
+  window.removeEventListener('open-workspace-settings', openSettings)
   unmounted = true
   stopDrop?.()
   if (toastTimer) clearTimeout(toastTimer)
@@ -507,59 +594,67 @@ onBeforeUnmount(() => {
     @dragleave="dragLeave"
     @drop="drop"
   >
-    <header class="workspace-toolbar library-topbar">
-      <h1 class="visually-hidden">棋谱库</h1>
-      <div class="topbar-actions">
-        <button class="workspace-button" type="button" :disabled="busy" @click="fileInput?.click()"><FileUp :size="15" /><span>导入</span></button>
-        <button class="workspace-button primary" type="button" :disabled="busy" @click="modal = 'create'"><Plus :size="16" /><span>新建</span></button>
-        <div class="topbar-spacer" />
-        <details ref="backupMenu" class="backup-menu" @keydown.esc.stop.prevent="backupMenu?.removeAttribute('open')">
-          <summary class="workspace-icon" aria-label="棋谱库更多操作" title="棋谱库更多操作"><MoreHorizontal :size="18" /></summary>
-          <div class="command-menu"><button type="button" :disabled="busy" @click="backup"><Download :size="15" />导出整库备份</button><button type="button" :disabled="busy" @click="backupInput?.click()"><FileUp :size="15" />从备份恢复</button></div>
-        </details>
-      </div>
-    </header>
+    <h1 class="visually-hidden">棋谱库</h1>
     <input ref="fileInput" class="visually-hidden" type="file" accept=".sgf" multiple @change="inputFiles" />
     <input ref="backupInput" class="visually-hidden" type="file" accept=".json" @change="chooseBackup" />
-    <div v-if="error || library.error" class="library-error" role="alert"><span>{{ error || library.error }}</span><button class="workspace-icon" type="button" aria-label="关闭错误消息" title="关闭" @click="clearError"><X :size="15" /></button></div>
     <div class="library-layout" :class="{ 'has-navigation': navigationShown && !navigationDrawer, 'has-preview': previewShown && !previewDrawer }">
       <LibraryPane :visible="navigationShown" :drawer="navigationDrawer" side="left" label="棋谱分类导航" @close="closeNavigation">
-        <LibraryNavigation :category="library.category" :counts="library.counts" :collections="library.data.collections" :tags="tags" :collection-counts="collectionCounts" :tag-counts="tagCounts" :drawer="navigationDrawer"
-          @select="selectCategory" @create-collection="modal = 'collection'" @manage-collection="manageCollection" @close="closeNavigation" />
+        <div class="workspace-toolbar library-topbar">
+          <div class="topbar-actions">
+            <button class="workspace-button" type="button" :disabled="workspaceBusy" @click="fileInput?.click()"><FileUp :size="15" /><span>导入</span></button>
+            <button class="workspace-button primary" type="button" :disabled="workspaceBusy" @click="modal = 'create'"><Plus :size="16" /><span>新建</span></button>
+            <button v-if="navigationDrawer" class="workspace-icon" type="button" title="关闭分类导航" aria-label="关闭分类导航" @click="closeNavigation"><X :size="17" /></button>
+            <div class="topbar-spacer" />
+            <details ref="backupMenu" class="backup-menu" @toggle="syncBackupMenu" @keydown.esc.stop.prevent="closeBackupMenu">
+              <summary class="workspace-icon" aria-label="棋谱库更多操作" title="棋谱库更多操作"><MoreHorizontal :size="18" /></summary>
+            </details>
+          </div>
+        </div>
+        <LibraryNavigation :category="library.category" :counts="library.counts" :collections="library.data.collections" :tags="tags" :collection-counts="collectionCounts" :tag-counts="tagCounts"
+          @select="selectCategory" @create-collection="modal = 'collection'" @manage-collection="manageCollection" />
       </LibraryPane>
+      <Teleport to="body">
+        <div v-if="backupMenuOpen" ref="backupMenuPopup" class="command-menu backup-command-menu" :style="{ left: `${backupMenuPosition.left}px`, top: `${backupMenuPosition.top}px` }" role="menu">
+          <button type="button" role="menuitem" :disabled="workspaceBusy" @click="backup"><Download :size="15" />导出整库备份</button>
+          <button type="button" role="menuitem" :disabled="workspaceBusy" @click="openBackupPicker"><FileUp :size="15" />从备份恢复</button>
+        </div>
+      </Teleport>
       <section class="library-main" aria-label="棋谱列表">
         <header class="library-list-heading">
           <div class="list-heading-title"><button class="workspace-icon" type="button" title="分类导航" aria-label="切换分类导航" :aria-expanded="navigationShown" @click="toggleSidebar"><PanelLeft :size="18" /></button><h2 :title="heading">{{ heading }}</h2><span class="category-count">{{ filtered.length }} 局</span></div>
           <button class="workspace-icon" type="button" title="棋谱详情" aria-label="切换棋谱详情" :aria-pressed="previewShown" @click="togglePreview"><PanelRight :size="18" /></button>
         </header>
-        <LibraryToolbar v-model:query="library.query" v-model:view="view" :filters="filters" :filters-visible="filtersVisible" :sort="sort" :ascending="ascending" :selection-count="library.selectedIds.length" :busy="busy" :trash="isTrash"
-          @update:sort="sortBy" @filter="updateFilter" @toggle-filters="filtersVisible = !filtersVisible" @toggle-direction="ascending = !ascending"
-          @clear="resetFilters" @cancel="library.selectedIds = []" @organize="modal = 'batch'" @download="download(library.selectedIds)" @remove="askDelete(library.selectedIds)" @restore="restore(library.selectedIds)" />
+        <LibraryToolbar v-model:query="library.query" v-model:view="view" :filters="filters" :sort="sort" :ascending="ascending" :selection-count="library.selectedIds.length" :busy="workspaceBusy" :trash="isTrash" :selectable-count="filtered.length" :all-selected="allGridSelected" :partially-selected="gridSelectedCount > 0 && !allGridSelected"
+          @update:sort="sortBy" @filter="updateFilter" @toggle-direction="ascending = !ascending"
+          @clear="resetFilters" @cancel="library.selectedIds = []" @organize="openBatch()" @download="download(library.selectedIds)" @remove="askDelete(library.selectedIds)" @restore="restore(library.selectedIds)" @toggle-all="toggleAll" />
         <div v-if="library.loading && !library.initialized" class="library-empty-state" role="status"><LoaderCircle class="spinning" :size="24" /><h3>正在读取棋谱库</h3></div>
-        <RecordList v-else-if="filtered.length" :records="filtered" :selected-id="library.selectedId" :selected-ids="library.selectedIds" :view="view" :sort="sort" :ascending="ascending" :page="page" :scroll-top="library.ui.scrollTop" :busy="busy" :trash="isTrash"
-          @select="select" @open="open" @toggle="toggle" @toggle-all="toggleAll" @favorite="favorite" @sort="sortBy" @page="page = $event" @scroll="library.ui.scrollTop = $event" />
-        <div v-else class="library-empty-state">
-          <div class="empty-library-image"><img src="/card-backgrounds/library.png" alt="围棋棋谱收藏" /></div>
+        <div v-else class="record-list-host" v-show="filtered.length">
+          <RecordList :records="filtered" :selected-id="library.selectedId" :selected-ids="library.selectedIds" :view="view" :sort="sort" :ascending="ascending" :page="page" :scroll-top="library.ui.scrollTop" :busy="workspaceBusy" :saving-ids="savingRecordIds" :trash="isTrash"
+            @select="select" @open="open" @toggle="toggle" @toggle-all="toggleAll" @favorite="favorite" @organize="openBatch([$event])" @save="saveHistoryRecord" @download="download([$event])" @remove="askDelete([$event])" @restore="restore([$event])" @sort="sortBy" @page="page = $event" @scroll="library.ui.scrollTop = $event" />
+        </div>
+        <div v-if="!library.loading || library.initialized" class="library-empty-state" v-show="!filtered.length">
           <h3>{{ emptyTitle }}</h3>
           <div class="empty-actions">
             <button v-if="hasConditions" class="workspace-button" type="button" @click="resetFilters"><Undo2 :size="15" />清除筛选</button>
-            <button v-else-if="!isTrash" class="workspace-button primary" type="button" :disabled="busy" @click="fileInput?.click()"><FileUp :size="15" />导入棋谱</button>
-            <button v-if="!hasConditions && !isTrash && library.category === 'all'" class="workspace-button" type="button" :disabled="busy" @click="modal = 'create'"><Plus :size="15" />新建棋谱</button>
+            <button v-else-if="!isTrash" class="workspace-button primary" type="button" :disabled="workspaceBusy" @click="fileInput?.click()"><FileUp :size="15" />导入棋谱</button>
+            <button v-if="!hasConditions && !isTrash && library.category === 'all'" class="workspace-button" type="button" :disabled="workspaceBusy" @click="modal = 'create'"><Plus :size="15" />新建棋谱</button>
           </div>
         </div>
       </section>
       <LibraryPane :visible="previewShown" :drawer="previewDrawer" side="right" label="棋谱详情" @close="closePreview">
-        <RecordPreview :record="previewRecord" :trash="isTrash" :busy="busy" :active="previewShown" :collections="library.data.collections" :save-metadata="edit"
+        <RecordPreview :record="previewRecord" :trash="isTrash" :busy="workspaceBusy" :saving="Boolean(previewRecord && savingRecordIds.includes(previewRecord.id))" :active="previewShown" :collections="library.data.collections" :save-metadata="edit" :coordinates="coordinatesVisible" :move-numbers="moveNumbersVisible" :board-style="boardStyle"
           @close="closePreview" @open="open" @favorite="favorite" @remove="(record) => askDelete([record.id])" @restore="(record) => restore([record.id])"
           @add-tag="tag" @remove-tag="removeTag" @review="review" @download="(record) => download([record.id])"
-          @collection="(record, ids) => run(async () => { await library.patch(record.id, { collectionIds: ids }) })" />
+          @collection="(record, ids) => patchRecord(record, { collectionIds: ids })" @error="notify($event, 'error')" />
       </LibraryPane>
     </div>
     <div v-if="dragging" class="library-drop-target">
       <FileUp :size="36" /><strong>导入 SGF 棋谱</strong>
     </div>
-    <div v-if="toast" class="library-toast" role="status">
-      <Check :size="16" /><span>{{ toast }}</span
+    <Teleport to="body">
+    <Transition name="library-toast">
+    <div v-if="toast" ref="toastElement" popover="manual" class="library-toast" :class="toastType" :role="toastType === 'error' ? 'alert' : 'status'" aria-atomic="true">
+      <CircleAlert v-if="toastType === 'error'" :size="16" /><Check v-else :size="16" /><span>{{ toast }}</span
       ><button
         v-if="lastDeleted.length"
         type="button"
@@ -576,6 +671,8 @@ onBeforeUnmount(() => {
         <X :size="14" />
       </button>
     </div>
+    </Transition>
+    </Teleport>
     <LibraryDialog
       v-if="modal === 'create'"
       title="新建棋谱"
@@ -612,11 +709,10 @@ onBeforeUnmount(() => {
             min="-100"
             max="100"
             required /></label
-        ><label>日期<input v-model="creation.date" type="date" /></label
+        ><label>日期<DatePicker v-model="creation.date" ariaLabel="日期" /></label
         ><label class="span-two"
           >赛事<input v-model="creation.event" maxlength="160"
         /></label>
-        <p v-if="error" class="form-error span-two" role="alert">{{ error }}</p>
         <div class="dialog-actions span-two">
           <button
             class="workspace-button"
@@ -644,7 +740,6 @@ onBeforeUnmount(() => {
             maxlength="80"
             autofocus
         /></label>
-        <p v-if="error" class="form-error" role="alert">{{ error }}</p>
         <div class="dialog-actions">
           <button
             class="workspace-button"
@@ -723,7 +818,6 @@ onBeforeUnmount(() => {
             /><X v-if="result.status === 'error'" :size="15" class="danger" />
           </li>
         </ul>
-        <p v-if="error" class="form-error" role="alert">{{ error }}</p>
         <div class="dialog-actions">
           <button
             v-if="results.some((result) => result.status === 'error')"
@@ -765,7 +859,6 @@ onBeforeUnmount(() => {
               : `将这 ${deleteIds.length} 局棋谱移入回收站？之后可以恢复。`
           }}
         </p>
-        <p v-if="error" class="form-error" role="alert">{{ error }}</p>
         <div class="dialog-actions">
           <button
             class="workspace-button"
@@ -819,7 +912,6 @@ onBeforeUnmount(() => {
             </option>
           </select></label
         >
-        <p v-if="error" class="form-error" role="alert">{{ error }}</p>
         <div class="dialog-actions">
           <button
             class="workspace-button"
@@ -843,7 +935,6 @@ onBeforeUnmount(() => {
         <p>
           将 {{ pendingBackup?.name }} 合并到当前棋谱库，保留已有棋谱与棋谱集。
         </p>
-        <p v-if="error" class="form-error" role="alert">{{ error }}</p>
         <div class="dialog-actions">
           <button
             class="workspace-button"
@@ -863,8 +954,21 @@ onBeforeUnmount(() => {
         </div>
       </div></LibraryDialog
     >
-    <LibraryDialog v-if="modal === 'switch-research'" title="当前研究尚未保存" :busy="busy" @close="modal = null"><div class="confirmation-content"><p>打开另一份棋谱前，是否保存当前研究？</p><p v-if="error" class="form-error" role="alert">{{ error }}</p><div class="dialog-actions"><button class="workspace-button" type="button" :disabled="busy" @click="modal = null">取消</button><button class="workspace-button" type="button" :disabled="busy" @click="continueOpen(false)">放弃并打开</button><button class="workspace-button primary" type="button" :disabled="busy" @click="continueOpen(true)">保存并打开</button></div></div></LibraryDialog>
-    <LibraryDialog v-if="modal === 'manage-collection' && managedCollection" title="管理棋谱集" :busy="busy" @close="modal = null"><form class="lib-form single" @submit.prevent="renameCollection"><label>名称<input v-model="managedCollection.name" required maxlength="80" /></label><p v-if="error" class="form-error" role="alert">{{ error }}</p><div class="dialog-actions"><button class="workspace-button" type="button" :disabled="busy" @click="removeCollection">移除棋谱集</button><button class="workspace-button" type="button" :disabled="busy" @click="modal = null">取消</button><button class="workspace-button primary" type="submit" :disabled="busy">保存</button></div></form></LibraryDialog>
+    <LibraryDialog v-if="modal === 'switch-research'" title="当前研究尚未保存" :busy="busy" @close="modal = null"><div class="confirmation-content"><p>打开另一份棋谱前，是否保存当前研究？</p><div class="dialog-actions"><button class="workspace-button" type="button" :disabled="busy" @click="modal = null">取消</button><button class="workspace-button" type="button" :disabled="busy" @click="continueOpen(false)">放弃并打开</button><button class="workspace-button primary" type="button" :disabled="busy" @click="continueOpen(true)">保存并打开</button></div></div></LibraryDialog>
+    <LibraryDialog v-if="modal === 'manage-collection' && managedCollection" title="管理棋谱集" :busy="busy" @close="modal = null"><form class="lib-form single" @submit.prevent="renameCollection"><label>名称<input v-model="managedCollection.name" required maxlength="80" /></label><div class="dialog-actions"><button class="workspace-button" type="button" :disabled="busy" @click="removeCollection">移除棋谱集</button><button class="workspace-button" type="button" :disabled="busy" @click="modal = null">取消</button><button class="workspace-button primary" type="submit" :disabled="busy">保存</button></div></form></LibraryDialog>
+    <GameSettingsDialog
+      :open="settingsOpen"
+      context="library"
+      :coordinates-enabled="coordinatesVisible"
+      :move-numbers-enabled="moveNumbersVisible"
+      :immersive-enabled="false"
+      :board-style="boardStyle"
+      recommendation-strength="auto"
+      @close="settingsOpen = false"
+      @update:coordinates-enabled="coordinatesVisible = $event"
+      @update:move-numbers-enabled="moveNumbersVisible = $event"
+      @update:board-style="boardStyle = $event"
+    />
   </main>
 </template>
 

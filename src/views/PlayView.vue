@@ -1622,7 +1622,6 @@ function setBoardStyle(value: BoardStyle) {
         <p class="result-modal-hint result-copy">{{ gameResultCopy }}</p>
       </div>
       <div class="result-modal-actions result-modal-actions-separated">
-        <SaveGameRecord :snapshot="current" :black="blackPlayerName" :white="whitePlayerName" :rule-set="gameSetup.ruleSet" :komi="refereeKomi(gameSetup)" />
         <button class="result-action" type="button" @click="startAnotherGame">
           再来一局
         </button>
@@ -1632,6 +1631,8 @@ function setBoardStyle(value: BoardStyle) {
       </div>
     </section>
   </div>
+
+  <SaveGameRecord v-if="gameFinished" :snapshot="current" :black="blackPlayerName" :white="whitePlayerName" :rule-set="gameSetup.ruleSet" :komi="refereeKomi(gameSetup)" auto history-only />
 
   <div v-if="pendingAction" class="result-modal-backdrop confirm-modal-backdrop">
     <section

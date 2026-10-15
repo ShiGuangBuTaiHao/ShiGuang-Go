@@ -11,7 +11,7 @@ function moduleUrl(path, imports = {}) {
   return `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
 }
 const types = moduleUrl('../src/types/library.ts')
-const { filterChips, filterLibraryRecords, pageCount, LIBRARY_PAGE_SIZE } = await import(moduleUrl('../src/components/library/workspace.ts', { '../../types/library': types }))
+const { filterChips, filterLibraryRecords, pageCount, preserveRecordOrder, LIBRARY_PAGE_SIZE } = await import(moduleUrl('../src/components/library/workspace.ts', { '../../types/library': types }))
 const emptyFilters = { sizeFilter: '', sourceFilter: '', reviewFilter: '', fromDate: '', toDate: '' }
 const records = [
   { id: 'a', title: 'Game 10', black: 'A', white: 'B', boardSize: 19, source: 'import', reviewState: 'pending', date: '2026-10-01', tags: ['training'], collectionIds: ['collection-1'], updatedAt: '2026-10-03', openedAt: '2026-10-02' },
@@ -35,6 +35,14 @@ test('recent view defaults to opened time and both sort directions work', () => 
   assert.deepEqual(ids(filterLibraryRecords(records, 'all', emptyFilters, 'title', true)), ['c', 'b', 'a'])
   assert.deepEqual(ids(filterLibraryRecords(records, 'all', emptyFilters, 'title', false)), ['a', 'b', 'c'])
   assert.deepEqual(ids(filterLibraryRecords(records, 'all', emptyFilters, 'players', true)), ['a', 'b', 'c'])
+})
+test('record updates keep the visible order while new and filtered records remain predictable', () => {
+  const updated = records.map(record => record.id === 'a' ? { ...record, updatedAt: '2026-10-05' } : record)
+  const sorted = filterLibraryRecords(updated, 'all', emptyFilters, 'updatedAt', false)
+  assert.deepEqual(ids(sorted), ['a', 'b', 'c'])
+  assert.deepEqual(ids(preserveRecordOrder(sorted, ['b', 'c', 'a'])), ['b', 'c', 'a'])
+  assert.deepEqual(ids(preserveRecordOrder(sorted.filter(record => record.id !== 'c'), ['b', 'c', 'a'])), ['b', 'a'])
+  assert.deepEqual(ids(preserveRecordOrder([...sorted, { ...records[0], id: 'new' }], ['b', 'c', 'a'])), ['new', 'b', 'c', 'a'])
 })
 test('active chips retain individual removable filter keys', () => {
   assert.deepEqual(filterChips(emptyFilters), [])

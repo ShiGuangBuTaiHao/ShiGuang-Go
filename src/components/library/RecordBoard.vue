@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { PreviewPosition } from '../../domain/sgf'
+import type { BoardStyle } from '../../domain/boardTheme'
 const props = defineProps<{
   position: PreviewPosition
   coordinates?: boolean
+  moveNumbers?: boolean
+  boardStyle?: BoardStyle
 }>()
 const size = computed(() => props.position.board.length)
 const cell = computed(() => 368 / (size.value - 1))
@@ -35,8 +38,8 @@ const stones = computed(() =>
     role="img"
     :aria-label="`${size} 路棋盘，第 ${position.moveNumber} 手`"
   >
-    <rect width="440" height="440" rx="4" fill="#d8b984" />
-    <image
+    <rect width="440" height="440" rx="4" :fill="props.boardStyle === 'minimal' ? '#e4d3ad' : props.boardStyle === 'glassmorphism' ? '#d9e0dc' : '#d8b984'" />
+    <image v-if="props.boardStyle !== 'minimal' && props.boardStyle !== 'glassmorphism'"
       href="/board-themes/classic/board-wood.jpg"
       width="440"
       height="440"
@@ -72,6 +75,9 @@ const stones = computed(() =>
       :width="cell * 0.94"
       :height="cell * 0.94"
     />
+    </g>
+    <g v-if="moveNumbers" text-anchor="middle" dominant-baseline="central" font-family="Arial, sans-serif" :font-size="Math.max(8, cell * 0.42)" font-weight="600">
+      <text v-for="mark in position.moveNumbers" :key="`${mark.row}-${mark.col}`" :x="36 + mark.col * cell" :y="36 + mark.row * cell" :fill="mark.stone === 'black' ? '#fff' : '#222'">{{ mark.moveNumber }}</text>
     </g>
     <circle
       v-if="position.lastMove"

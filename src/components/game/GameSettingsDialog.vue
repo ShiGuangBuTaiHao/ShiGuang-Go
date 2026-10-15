@@ -5,19 +5,26 @@ import SetupDropdown, { type SetupDropdownOption } from '../ui/SetupDropdown.vue
 import type { RecommendationStrength } from '../../domain/ai'
 import type { BoardStyle } from '../../domain/boardTheme'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   open: boolean
+  context?: 'game' | 'research' | 'library'
   coordinatesEnabled: boolean
+  moveNumbersEnabled?: boolean
+  candidatesEnabled?: boolean
+  territoryEnabled?: boolean
   immersiveEnabled: boolean
   localMode?: boolean
   recommendationEnabled?: boolean
   boardStyle: BoardStyle
   recommendationStrength: RecommendationStrength
-}>()
+}>(), { context: 'game' })
 
 const emit = defineEmits<{
   close: []
   'update:coordinatesEnabled': [value: boolean]
+  'update:moveNumbersEnabled': [value: boolean]
+  'update:candidatesEnabled': [value: boolean]
+  'update:territoryEnabled': [value: boolean]
   'update:immersiveEnabled': [value: boolean]
   'update:recommendationEnabled': [value: boolean]
   'update:boardStyle': [value: BoardStyle]
@@ -61,6 +68,12 @@ async function focusDialog() {
 }
 
 function trapFocus(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    emit('close')
+    return
+  }
   if (event.key !== 'Tab' || !dialog.value) return
   const focusable = [...dialog.value.querySelectorAll<HTMLElement>(focusableSelector)]
   if (!focusable.length) return
@@ -89,11 +102,12 @@ onBeforeUnmount(() => restoreFocus?.focus())
 </script>
 
 <template>
+  <Teleport to="body">
   <div v-if="open" class="settings-backdrop" @click.self="emit('close')">
     <section ref="dialog" class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="game-settings-title" tabindex="-1" @keydown="trapFocus">
       <header class="settings-heading">
-        <h2 id="game-settings-title">对局设置</h2>
-        <button class="settings-close" type="button" aria-label="关闭对局设置" title="关闭" @click="emit('close')">
+        <h2 id="game-settings-title">{{ props.context === 'research' ? '研究盘设置' : props.context === 'library' ? '棋谱库设置' : '对局设置' }}</h2>
+        <button class="settings-close" type="button" :aria-label="`关闭${props.context === 'research' ? '研究盘' : props.context === 'library' ? '棋谱库' : '对局'}设置`" title="关闭" @click="emit('close')">
           <X :size="18" stroke-width="2" aria-hidden="true" />
         </button>
       </header>
@@ -119,7 +133,26 @@ onBeforeUnmount(() => restoreFocus?.focus())
             </button>
           </div>
 
-          <div class="settings-row">
+          <div v-if="props.context !== 'game'" class="settings-row">
+            <span class="settings-row-icon"><Crosshair :size="18" aria-hidden="true" /></span>
+            <span class="settings-row-copy"><strong>显示手数</strong><small>在棋子上标记落子顺序</small></span>
+            <button class="settings-toggle" type="button" role="switch" :aria-checked="props.moveNumbersEnabled" :aria-label="props.moveNumbersEnabled ? '关闭显示手数' : '开启显示手数'" @click="emit('update:moveNumbersEnabled', !props.moveNumbersEnabled)"><span class="settings-toggle-knob" :class="{ on: props.moveNumbersEnabled }" /></button>
+          </div>
+
+          <template v-if="props.context === 'research'">
+            <div class="settings-row">
+              <span class="settings-row-icon"><Sparkles :size="18" aria-hidden="true" /></span>
+              <span class="settings-row-copy"><strong>候选点</strong><small>在棋盘上显示分析推荐的落点</small></span>
+              <button class="settings-toggle" type="button" role="switch" :aria-checked="props.candidatesEnabled" :aria-label="props.candidatesEnabled ? '关闭候选点' : '开启候选点'" @click="emit('update:candidatesEnabled', !props.candidatesEnabled)"><span class="settings-toggle-knob" :class="{ on: props.candidatesEnabled }" /></button>
+            </div>
+            <div class="settings-row">
+              <span class="settings-row-icon"><Sparkles :size="18" aria-hidden="true" /></span>
+              <span class="settings-row-copy"><strong>势力范围</strong><small>显示分析估算的黑白势力区域</small></span>
+              <button class="settings-toggle" type="button" role="switch" :aria-checked="props.territoryEnabled" :aria-label="props.territoryEnabled ? '关闭势力范围' : '开启势力范围'" @click="emit('update:territoryEnabled', !props.territoryEnabled)"><span class="settings-toggle-knob" :class="{ on: props.territoryEnabled }" /></button>
+            </div>
+          </template>
+
+          <div v-if="props.context === 'game'" class="settings-row">
             <span class="settings-row-icon"><Volume2 :size="18" aria-hidden="true" /></span>
             <span class="settings-row-copy">
               <strong>声音</strong>
@@ -138,7 +171,7 @@ onBeforeUnmount(() => restoreFocus?.focus())
             </button>
           </div>
 
-          <div class="settings-row">
+          <div v-if="props.context === 'game'" class="settings-row">
             <span class="settings-row-icon"><Maximize2 :size="18" aria-hidden="true" /></span>
             <span class="settings-row-copy">
               <strong>沉浸模式</strong>
@@ -157,7 +190,7 @@ onBeforeUnmount(() => restoreFocus?.focus())
             </button>
           </div>
 
-          <div v-if="props.localMode" class="settings-row">
+          <div v-if="props.context === 'game' && props.localMode" class="settings-row">
             <span class="settings-row-icon"><Sparkles :size="18" aria-hidden="true" /></span>
             <span class="settings-row-copy">
               <strong>推荐落点</strong>
@@ -190,7 +223,7 @@ onBeforeUnmount(() => restoreFocus?.focus())
             />
           </div>
 
-          <div class="settings-row settings-dropdown-row">
+          <div v-if="props.context === 'game' && props.localMode" class="settings-row settings-dropdown-row">
             <span class="settings-row-icon"><Sparkles :size="18" aria-hidden="true" /></span>
             <span class="settings-row-copy">
               <strong>推荐落点强度</strong>
@@ -208,6 +241,7 @@ onBeforeUnmount(() => restoreFocus?.focus())
 
     </section>
   </div>
+  </Teleport>
 </template>
 
 <style scoped>

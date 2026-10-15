@@ -19,7 +19,7 @@ watch(() => [props.visible, props.drawer], async () => {
   } else {
     element.close()
     if (props.visible) element.setAttribute('open', '')
-    if (wasModal) previousFocus?.focus()
+    if (wasModal && previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
   }
 }, { immediate: true, flush: 'post' })
 
@@ -32,7 +32,7 @@ function backdrop(event: MouseEvent) {
 onBeforeUnmount(() => {
   if (dialog.value?.matches(':modal')) {
     dialog.value.close()
-    previousFocus?.focus()
+    if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
   }
 })
 </script>

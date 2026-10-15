@@ -8,6 +8,7 @@ import {
   getRecordResearch,
   importSgfFiles,
   listLibrary,
+  saveHistoryRecord,
   restoreLibraryRecords,
   saveCollection,
   saveResearchRecord,
@@ -36,19 +37,17 @@ export const useLibraryStore = defineStore('library', () => {
       data.value.records.find((record) => record.id === selectedId.value) ??
       null,
   )
-  const ui = reactive({ sidebarVisible: window.innerWidth > 760, previewVisible: window.innerWidth > 1100, filtersVisible: false, view: 'list' as 'list' | 'grid', page: 1, sort: 'updatedAt', ascending: false, sizeFilter: '', sourceFilter: '', reviewFilter: '', fromDate: '', toDate: '', scrollTop: 0 })
+  const ui = reactive({ sidebarVisible: window.innerWidth > 760, previewVisible: window.innerWidth > 1100, filtersVisible: false, view: 'grid' as 'list' | 'grid', page: 1, sort: 'updatedAt', ascending: false, sizeFilter: '', sourceFilter: '', reviewFilter: '', fromDate: '', toDate: '', scrollTop: 0 })
   const visibleRecords = computed(() =>
     data.value.records
       .filter((record) =>
         category.value === 'trash'
           ? Boolean(record.deletedAt)
-          : !record.deletedAt,
+          : !record.deletedAt && (category.value === 'recent' || record.source !== 'history'),
       )
       .filter((record) => {
         if (category.value === 'favorites' && !record.favorite) return false
-        if (category.value === 'recent' && !record.openedAt) return false
-        if (category.value === 'pending' && record.reviewState !== 'pending')
-          return false
+        if (category.value === 'recent' && !['game', 'history'].includes(record.source)) return false
         if (
           category.value === 'reviewing' &&
           record.reviewState !== 'reviewing'
@@ -73,15 +72,12 @@ export const useLibraryStore = defineStore('library', () => {
       }),
   )
   const counts = computed(() => ({
-    all: data.value.records.filter((record) => !record.deletedAt).length,
+    all: data.value.records.filter((record) => !record.deletedAt && record.source !== 'history').length,
     favorites: data.value.records.filter(
       (record) => !record.deletedAt && record.favorite,
     ).length,
     recent: data.value.records.filter(
-      (record) => !record.deletedAt && record.openedAt,
-    ).length,
-    pending: data.value.records.filter(
-      (record) => !record.deletedAt && record.reviewState === 'pending',
+      (record) => !record.deletedAt && ['game', 'history'].includes(record.source),
     ).length,
     trash: data.value.records.filter((record) => Boolean(record.deletedAt))
       .length,
@@ -125,6 +121,13 @@ export const useLibraryStore = defineStore('library', () => {
     const record = await updateLibraryRecord(id, patchValue)
     const index = data.value.records.findIndex((item) => item.id === id)
     if (index >= 0) data.value.records[index] = record
+    return record
+  }
+  async function saveHistory(id: string) {
+    const record = await saveHistoryRecord(id)
+    const index = data.value.records.findIndex(item => item.id === record.id)
+    if (index >= 0) data.value.records[index] = record
+    else data.value.records.unshift(record)
     return record
   }
   async function editMetadata(id: string, info: RecordMetadata) {
@@ -205,6 +208,7 @@ export const useLibraryStore = defineStore('library', () => {
     importFiles,
     create,
     patch,
+    saveHistory,
     editMetadata,
     remove,
     restore,

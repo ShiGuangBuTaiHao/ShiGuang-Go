@@ -10,7 +10,7 @@ import type {
   Stone,
   TerritoryMarker,
 } from "../../types/game";
-import type { BoardMark } from "../../types/research";
+import type { BoardMark, BoardMarkType } from "../../types/research";
 
 const props = defineProps<{
   board: Board;
@@ -28,6 +28,7 @@ const props = defineProps<{
   disabled: boolean;
   busy: boolean;
   marks?: BoardMark[];
+  markPreviewType?: BoardMarkType | null;
 }>();
 const emit = defineEmits<{ place: [row: number, col: number] }>();
 
@@ -513,7 +514,38 @@ function render() {
   });
 
   const preview = hover.value;
-  if (preview && !props.board[preview.row][preview.col]) {
+  if (preview && props.markPreviewType && !props.board[preview.row][preview.col]) {
+    const x = padding + preview.col * cell;
+    const y = padding + preview.row * cell;
+    const markSize = cell * 0.28;
+    context.save();
+    context.globalAlpha = 0.55;
+    context.strokeStyle = themeAccent;
+    context.lineWidth = Math.max(1.5, cell * 0.045);
+    context.lineJoin = "round";
+    if (props.markPreviewType === "circle") {
+      context.beginPath();
+      context.arc(x, y, markSize, 0, Math.PI * 2);
+      context.stroke();
+    } else if (props.markPreviewType === "square") {
+      context.strokeRect(x - markSize, y - markSize, markSize * 2, markSize * 2);
+    } else if (props.markPreviewType === "triangle") {
+      context.beginPath();
+      context.moveTo(x, y - markSize);
+      context.lineTo(x + markSize, y + markSize * 0.82);
+      context.lineTo(x - markSize, y + markSize * 0.82);
+      context.closePath();
+      context.stroke();
+    } else if (props.markPreviewType === "cross") {
+      context.beginPath();
+      context.moveTo(x - markSize, y - markSize);
+      context.lineTo(x + markSize, y + markSize);
+      context.moveTo(x + markSize, y - markSize);
+      context.lineTo(x - markSize, y + markSize);
+      context.stroke();
+    }
+    context.restore();
+  } else if (preview && !props.board[preview.row][preview.col]) {
     drawStone(
       context,
       padding + preview.col * cell,
@@ -581,6 +613,7 @@ watch(
     props.showMoveNumbers,
     props.boardStyle,
     props.marks,
+    props.markPreviewType,
   ],
   render,
   { deep: true }

@@ -28,6 +28,11 @@ const STORAGE_KEY = 'shiguang-go:library:v1'
 const fileNameFor = (title: string, extension = 'sgf') =>
   `${(title || '未命名棋谱').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')}.${extension}`
 const now = () => new Date().toISOString()
+function localDate(timestamp: string) {
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return new Date().toLocaleDateString('en-CA')
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
 const uid = (prefix: string) => `${prefix}-${crypto.randomUUID()}`
 let queue: Promise<unknown> = Promise.resolve()
 
@@ -73,12 +78,14 @@ function buildRecord(
   info: RecordMetadata,
   originalSgf = sgf,
   fileName = fileNameFor(info.title),
+  timestamp = now(),
 ): LibraryRecord {
-  const timestamp = now()
+  const recordInfo = info.date ? info : { ...info, date: localDate(timestamp) }
+  const recordSgf = info.date ? sgf : updateSgfMetadata(sgf, recordInfo)
   return {
-    ...info,
+    ...recordInfo,
     id: uid('record'),
-    sgf,
+    sgf: recordSgf,
     originalSgf,
     fingerprint: '',
     fileName,
@@ -166,13 +173,41 @@ export function createLibraryRecord(info: Partial<RecordMetadata>) {
     return record
   })
 }
-export function saveGameRecord(snapshot: GameSnapshot, info: Partial<RecordMetadata>) {
+async function saveGame(snapshot: GameSnapshot, info: Partial<RecordMetadata>, source: 'game' | 'history') {
   return mutate(async data => {
     const sgf = gameToSgf(snapshot, info), fingerprint = await sgfFingerprint(sgf)
-    const existing = data.records.find(record => !record.deletedAt && record.fingerprint === fingerprint)
+    const existing = data.records.find(record => !record.deletedAt && record.source === source && record.fingerprint === fingerprint)
     if (existing) return existing
     const record = buildRecord(sgf, metadata(readSgf(sgf)[0]))
-    record.source = 'game'; record.fingerprint = fingerprint; data.records.unshift(record); return record
+    record.source = source; record.fingerprint = fingerprint; data.records.unshift(record)
+    if (source === 'history') {
+      const history = data.records.filter(item => item.source === 'history' && !item.deletedAt)
+      const expiredIds = new Set(history.slice(10).map(item => item.id))
+      if (expiredIds.size) data.records = data.records.filter(item => !expiredIds.has(item.id))
+    }
+    return record
+  })
+}
+export function saveGameRecord(snapshot: GameSnapshot, info: Partial<RecordMetadata>) { return saveGame(snapshot, info, 'game') }
+export function saveGameHistory(snapshot: GameSnapshot, info: Partial<RecordMetadata>) { return saveGame(snapshot, info, 'history') }
+export function saveHistoryRecord(id: string) {
+  return mutate((data) => {
+    const record = data.records.find(item => item.id === id && !item.deletedAt)
+    if (!record || record.source !== 'history') throw new Error('找不到这份历史棋谱')
+    const existing = data.records.find(item => !item.deletedAt && item.source === 'game' && item.fingerprint === record.fingerprint)
+    if (existing) return existing
+    const timestamp = now()
+    const saved: LibraryRecord = {
+      ...record,
+      id: uid('record'),
+      source: 'game',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      openedAt: null,
+      deletedAt: null,
+    }
+    data.records.unshift(saved)
+    return saved
   })
 }
 export function updateLibraryRecord(id: string, patch: Partial<LibraryRecord>) {
@@ -413,12 +448,15 @@ export function importLibraryBackup(file: File) {
       sgfToResearch(root)
       const fingerprint = await sgfFingerprint(source.sgf)
       if (current.records.some(record => record.id === source.id && record.fingerprint === fingerprint)) continue
+      const createdAt = typeof source.createdAt === 'string' ? source.createdAt : now()
       const record = buildRecord(
         source.sgf,
         metadata(root),
         typeof source.originalSgf === 'string'
           ? source.originalSgf
           : source.sgf,
+        typeof source.fileName === 'string' ? source.fileName : fileNameFor(source.title),
+        createdAt,
       )
       Object.assign(record, {
         id: ids.has(source.id) ? uid('record') : source.id,
@@ -438,11 +476,11 @@ export function importLibraryBackup(file: File) {
             : [],
         deletedAt:
           typeof source.deletedAt === 'string' ? source.deletedAt : null,
-        source: ['import', 'research', 'game'].includes(source.source)
+        source: ['import', 'research', 'game', 'history'].includes(source.source)
           ? source.source
           : 'import',
         fileName: typeof source.fileName === 'string' ? source.fileName : record.fileName,
-        createdAt: typeof source.createdAt === 'string' ? source.createdAt : record.createdAt,
+        createdAt,
         updatedAt: typeof source.updatedAt === 'string' ? source.updatedAt : record.updatedAt,
         openedAt: typeof source.openedAt === 'string' ? source.openedAt : null,
       })

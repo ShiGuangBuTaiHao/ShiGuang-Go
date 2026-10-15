@@ -125,20 +125,36 @@ export function applySgfNode(
 export interface PreviewPosition {
   board: Board
   lastMove: { row: number; col: number; stone: Stone } | null
+  moveNumbers: Array<{ row: number; col: number; moveNumber: number; stone: Stone }>
   moveNumber: number
   comment: string
 }
-export function previewPositions(root: SgfNode): PreviewPosition[] {
+export function previewPositions(root: SgfNode, path: number[] = []): PreviewPosition[] {
   const size = metadata(root).boardSize
-  let board = GoPosition.fromDimensions(size),
-    moveNumber = 0
-  return mainLine(root).map((node) => {
+  let board = GoPosition.fromDimensions(size), moveNumber = 0
+  const moveNumbers: PreviewPosition['moveNumbers'] = []
+  const line: SgfNode[] = []
+  let current: SgfNode | undefined = root
+  let depth = 0
+  while (current) {
+    line.push(current)
+    const branch = depth < path.length ? path[depth] : 0
+    current = current.children[branch] ?? current.children[0]
+    depth++
+  }
+  return line.map((node) => {
     board = applySgfNode(board, node, size)
     const move = node.data.B?.[0] ?? node.data.W?.[0]
     if (move !== undefined) moveNumber++
     const location = move && move !== 'tt' && !node.data.AB && !node.data.AW && !node.data.AE ? point(move, size) : null
+    const currentBoard = board.signMap.map((row) => row.map(stone))
+    for (let index = moveNumbers.length - 1; index >= 0; index--) {
+      const marker = moveNumbers[index]
+      if (!currentBoard[marker.row]?.[marker.col]) moveNumbers.splice(index, 1)
+    }
+    if (location) moveNumbers.push({ row: location[1], col: location[0], moveNumber, stone: node.data.B ? 'black' : 'white' })
     return {
-      board: board.signMap.map((row) => row.map(stone)),
+      board: currentBoard,
       lastMove: location
         ? {
             col: location[0],
@@ -147,6 +163,7 @@ export function previewPositions(root: SgfNode): PreviewPosition[] {
           }
         : null,
       moveNumber,
+      moveNumbers: [...moveNumbers],
       comment: node.data.C?.[0] ?? '',
     }
   })

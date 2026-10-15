@@ -407,7 +407,7 @@ onBeforeUnmount(() => {
         />
       </template>
 
-      <SaveGameRecord v-if="current.status === 'finished'" :snapshot="current" :black="blackName" :white="whiteName" :rule-set="lan.room?.config.ruleSet ?? 'chinese'" :komi="(lan.room?.config.komi ?? 3.75) * (lan.room?.config.komiUnit === '目' ? 1 : 2)" />
+      <SaveGameRecord v-if="current.status === 'finished'" :snapshot="current" :black="blackName" :white="whiteName" :rule-set="lan.room?.config.ruleSet ?? 'chinese'" :komi="(lan.room?.config.komi ?? 3.75) * (lan.room?.config.komiUnit === '目' ? 1 : 2)" auto />
       <p v-if="displayedError" class="error-note" role="alert">{{ displayedError }}</p>
     </SidebarShell>
   </div>

@@ -63,7 +63,7 @@ test('preview variation is atomic, handles passes and never changes the source t
   assert.equal(appendResearchVariation(tree, ['Z99']).tree, tree)
 })
 
-test('graph uses horizontal depth, distinct branch lanes, and marks the active path', () => {
+test('graph uses vertical depth, distinct branch lanes, and marks the active path', () => {
   let tree = play(createResearchTree(), 3, 3)
   const first = tree.currentNodeId
   tree = play(tree, 15, 15)
@@ -73,8 +73,8 @@ test('graph uses horizontal depth, distinct branch lanes, and marks the active p
   const graph = researchGraph(tree)
   const mainNode = graph.nodes.find((node) => node.id === main)
   const branchNode = graph.nodes.find((node) => node.id === branch)
-  assert.equal(mainNode.x, branchNode.x)
-  assert.notEqual(mainNode.y, branchNode.y)
+  assert.equal(mainNode.y, branchNode.y)
+  assert.notEqual(mainNode.x, branchNode.x)
   assert.equal(branchNode.current, true)
   assert.equal(mainNode.onPath, false)
   tree = promoteResearchVariation(tree)

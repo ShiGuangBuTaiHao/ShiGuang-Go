@@ -3,15 +3,48 @@ import { LoaderCircle } from 'lucide-vue-next'
 import AnalysisPanel from '../analysis/AnalysisPanel.vue'
 import type { KataGoAnalysis, WinratePoint } from '../../services/katago'
 
-const props = defineProps<{ analysis: KataGoAnalysis | null; history: WinratePoint[]; status: 'idle' | 'loading' | 'error'; error: string; moveNumbersEnabled: boolean; candidatesVisible: boolean; territoryVisible: boolean; previewMove?: string }>()
-const emit = defineEmits<{ request: []; stop: []; 'update:moveNumbersEnabled': [enabled: boolean]; 'update:candidatesVisible': [enabled: boolean]; 'update:territoryVisible': [enabled: boolean] }>()
+const props = defineProps<{ analysis: KataGoAnalysis | null; history: WinratePoint[]; status: 'idle' | 'loading' | 'error'; error: string; territoryStatus: 'idle' | 'loading' | 'error'; territoryError: string; territoryAvailable: boolean; moveNumbersEnabled: boolean; candidatesVisible: boolean; territoryVisible: boolean; previewMove?: string }>()
+const emit = defineEmits<{ request: [kind: 'candidates' | 'territory']; stop: [kind: 'candidates' | 'territory']; 'update:moveNumbersEnabled': [enabled: boolean]; 'update:candidatesVisible': [enabled: boolean]; 'update:territoryVisible': [enabled: boolean] }>()
 const perspective = defineModel<'black' | 'white'>('perspective', { default: 'black' })
+function isVisible(kind: 'candidates' | 'territory') {
+  const available = kind === 'candidates' ? Boolean(props.analysis) : props.territoryAvailable
+  return available && (kind === 'candidates' ? props.candidatesVisible : props.territoryVisible)
+}
+
+function isBusy(kind: 'candidates' | 'territory') {
+  return kind === 'territory' ? props.territoryStatus === 'loading' : props.status === 'loading'
+}
+
+function isDisabled() {
+  return Boolean(props.previewMove)
+}
+
+function commandText(kind: 'candidates' | 'territory') {
+  if (isBusy(kind)) return '停止'
+  return isVisible(kind) ? '关闭' : '获取'
+}
+
+function commandLabel(kind: 'candidates' | 'territory') {
+  if (isBusy(kind)) return '停止分析'
+  if (kind === 'candidates') return isVisible(kind) ? '关闭推荐落点' : '获取推荐落点'
+  return isVisible(kind) ? '关闭形势预测' : '获取形势预测'
+}
+
 function toggleOverlay(kind: 'candidates' | 'territory') {
-  if (props.status === 'loading') { emit('stop'); return }
-  const visible = Boolean(props.analysis) && (kind === 'candidates' ? props.candidatesVisible : props.territoryVisible)
-  if (kind === 'candidates') emit('update:candidatesVisible', !visible)
-  else emit('update:territoryVisible', !visible)
-  if (!props.analysis) emit('request')
+  if (isBusy(kind)) {
+    emit('stop', kind)
+    return
+  }
+  if (isVisible(kind)) {
+    if (kind === 'candidates') emit('update:candidatesVisible', false)
+    else emit('update:territoryVisible', false)
+    return
+  }
+  if (kind === 'candidates') emit('update:candidatesVisible', true)
+  else emit('update:territoryVisible', true)
+  if ((kind === 'candidates' && !props.analysis) || (kind === 'territory' && !props.territoryAvailable)) {
+    emit('request', kind)
+  }
 }
 </script>
 
@@ -24,17 +57,17 @@ function toggleOverlay(kind: 'candidates' | 'territory') {
       </div>
       <div class="control-row">
         <div class="control-copy"><strong>推荐落点</strong><span>分析当前局面的候选点</span></div>
-        <button class="analysis-command" type="button" :disabled="Boolean(previewMove)" :aria-busy="status === 'loading'" :aria-label="status === 'loading' ? '停止分析' : (analysis && props.candidatesVisible ? '关闭推荐落点' : '获取推荐落点')" :title="status === 'loading' ? '停止分析' : (analysis && props.candidatesVisible ? '关闭推荐落点' : '获取推荐落点')" @click="toggleOverlay('candidates')">
-          <LoaderCircle v-if="status === 'loading'" class="spin" :size="14" aria-hidden="true" /><span v-else>{{ analysis && props.candidatesVisible ? '关闭' : '获取' }}</span>
+        <button class="analysis-command" type="button" :disabled="isDisabled()" :aria-busy="isBusy('candidates')" :aria-label="commandLabel('candidates')" :title="commandLabel('candidates')" @click="toggleOverlay('candidates')">
+          <LoaderCircle v-if="isBusy('candidates')" class="spin" :size="14" aria-hidden="true" /><span v-else>{{ commandText('candidates') }}</span>
         </button>
       </div>
       <div class="control-row">
         <div class="control-copy"><strong>形势预测</strong><span>查看预测占领区域</span></div>
-        <button class="analysis-command" type="button" :disabled="Boolean(previewMove)" :aria-busy="status === 'loading'" :aria-label="status === 'loading' ? '取消获取形势' : (analysis && props.territoryVisible ? '关闭形势预测' : '获取形势')" :title="status === 'loading' ? '取消获取形势' : (analysis && props.territoryVisible ? '关闭形势预测' : '获取形势')" @click="toggleOverlay('territory')"><LoaderCircle v-if="status === 'loading'" class="spin" :size="14" aria-hidden="true" /><span v-else>{{ analysis && props.territoryVisible ? '关闭' : '获取' }}</span></button>
+        <button class="analysis-command" type="button" :disabled="isDisabled()" :aria-busy="isBusy('territory')" :aria-label="commandLabel('territory')" :title="commandLabel('territory')" @click="toggleOverlay('territory')"><LoaderCircle v-if="isBusy('territory')" class="spin" :size="14" aria-hidden="true" /><span v-else>{{ commandText('territory') }}</span></button>
       </div>
     </div>
     <AnalysisPanel embedded :analysis="analysis" :history="history" :perspective="perspective" @update:perspective="perspective = $event" />
-    <div v-if="error" class="analysis-error" role="alert">{{ error }}</div>
+    <div v-if="error || territoryError" class="analysis-error" role="alert">{{ error || territoryError }}</div>
   </section>
 </template>
 

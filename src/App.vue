@@ -169,7 +169,7 @@ onBeforeUnmount(() => {
 
 function openGameSettings() {
   if (route.name === 'research' || isLibrary.value) {
-    router.push({ name: 'settings' })
+    window.dispatchEvent(new Event('open-workspace-settings'))
     return
   }
   window.dispatchEvent(new Event('open-game-settings'))
@@ -266,7 +266,7 @@ function handleLeaveConfirmKeydown(event: KeyboardEvent) {
           <button class="header-settings board-back" type="button" :aria-label="isLanGame ? '返回局域网房间' : '返回主界面'" :title="isLanGame ? '返回局域网房间' : '返回主界面'" @click="isPlaying ? requestLeaveGame() : router.push({ name: 'mode-select' })">
             <House :size="20" aria-hidden="true" />
           </button>
-          <button class="header-settings" type="button" :aria-label="isPlaying ? '打开对局设置' : '打开设置'" :title="isPlaying ? '对局设置' : '设置'" @click="openGameSettings">
+          <button class="header-settings" type="button" :aria-label="isPlaying || isLibrary ? '打开对局设置' : '打开设置'" :title="isPlaying || isLibrary ? '对局设置' : '设置'" @click="openGameSettings">
             <Settings :size="20" />
           </button>
         </div>

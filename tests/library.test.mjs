@@ -70,6 +70,12 @@ test('SGF preserves branches, setup, comments, marks and unknown properties', ()
   assert.equal(again.children[0].children[1].data.LB[0], 'qq:A')
   assert.equal(domain.metadata(again).moves, 2)
 })
+test('library previews follow the last saved variation path', () => {
+  const root = domain.readSgf(contents)[0]
+  const selected = domain.previewPositions(root, [0, 1])
+  assert.deepEqual(selected.at(-1).lastMove, { row: 16, col: 16, stone: 'black' })
+  assert.equal(selected.at(-1).comment, '')
+})
 test('invalid and incomplete SGF fails before insertion', () => {
   for (const text of [
     'not sgf',
@@ -93,6 +99,16 @@ test('imports multi-game collections and skips equivalent SGF', async () => {
   ])
   assert.equal(collection.results.length, 2)
   assert.equal(collection.data.records.length, 4)
+})
+test('records without an SGF date use their local creation date', async () => {
+  const { data } = await service.importSgfFiles([
+    new File(['(;GM[1]SZ[9]GN[无日期棋谱])'], 'undated.sgf'),
+  ])
+  const record = data.records[0]
+  const created = new Date(record.createdAt)
+  const createdDate = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, '0')}-${String(created.getDate()).padStart(2, '0')}`
+  assert.equal(record.date, createdDate)
+  assert.equal(domain.readSgf(record.sgf)[0].data.DT[0], createdDate)
 })
 test('metadata edits update SGF and cannot replace content with stale record fields', async () => {
   const { data } = await service.importSgfFiles([
@@ -166,6 +182,25 @@ test('backup merge resolves id collisions, validates content and keeps current r
   assert.notEqual(restored.records[0].id, restored.records[1].id)
   assert.equal(restored.records[1].favorite, true)
 })
+test('backup records missing a date derive it from their original creation time', async () => {
+  const createdAt = '2020-01-02T03:04:05.000Z'
+  const source = {
+    ...await service.createLibraryRecord({ title: '旧棋谱' }),
+    id: 'record-old',
+    date: '',
+    sgf: '(;GM[1]SZ[9]GN[旧棋谱])',
+    createdAt,
+    fingerprint: 'old-record',
+  }
+  const restored = await service.importLibraryBackup(
+    new File([JSON.stringify({ version: 1, records: [source], collections: [] })], 'backup.json'),
+  )
+  const record = restored.records.find(item => item.id === 'record-old')
+  const created = new Date(createdAt)
+  const createdDate = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, '0')}-${String(created.getDate()).padStart(2, '0')}`
+  assert.equal(record.date, createdDate)
+  assert.equal(domain.readSgf(record.sgf)[0].data.DT[0], createdDate)
+})
 test('game archiving preserves moves, passes and authoritative referee result', async () => {
   const snapshot = { board: Array.from({ length: 19 }, () => Array(19).fill(null)), moves: [{ stone: 'black', coordinate: 'D16' }, { stone: 'white', coordinate: 'pass' }], result: { winner: 'black', loser: 'white', reason: 'score', score: { engine: 'gnugo', finalScore: 'B+4.5', margin: 4.5 } } }
   const record = await service.saveGameRecord(snapshot, { title: '对局', ruleSet: 'chinese', komi: 7.5 })
@@ -178,6 +213,40 @@ test('game archiving preserves moves, passes and authoritative referee result', 
   assert.deepEqual(root.children[0].children[0].data.W, [''])
   await service.saveGameRecord(snapshot, { title: '对局', ruleSet: 'chinese', komi: 7.5 })
   assert.equal((await service.listLibrary()).records.length, 1)
+})
+test('saving a game creates a history record even when identical SGF was imported first', async () => {
+  const snapshot = { board: Array.from({ length: 9 }, () => Array(9).fill(null)), moves: [{ stone: 'black', coordinate: 'D6' }], result: { winner: 'black', loser: 'white', reason: 'resignation' } }
+  const info = { title: '重复棋谱', black: '黑方', white: '白方', ruleSet: 'chinese', komi: 7.5, boardSize: 9, date: new Date().toLocaleDateString('en-CA') }
+  const sgf = domain.gameToSgf(snapshot, info)
+  await service.importSgfFiles([new File([sgf], 'already-saved.sgf')])
+  const game = await service.saveGameRecord(snapshot, info)
+  const records = (await service.listLibrary()).records
+  assert.equal(game.source, 'game')
+  assert.equal(records.filter(record => record.source === 'game').length, 1)
+  assert.equal(records.length, 2)
+})
+test('automatic game history is separate from saved library games and keeps only ten', async () => {
+  const snapshot = { board: Array.from({ length: 9 }, () => Array(9).fill(null)), moves: [], result: { winner: 'black', loser: 'white', reason: 'resignation' } }
+  for (let index = 0; index < 11; index++) {
+    await service.saveGameHistory(snapshot, { title: `历史 ${index}`, ruleSet: 'chinese', komi: 7.5, boardSize: 9, date: `2026-10-${String(index + 1).padStart(2, '0')}` })
+  }
+  await service.saveGameRecord(snapshot, { title: '手动保存', ruleSet: 'chinese', komi: 7.5, boardSize: 9, date: '2026-10-15' })
+  const records = (await service.listLibrary()).records
+  assert.equal(records.filter(record => record.source === 'history').length, 10)
+  assert.equal(records.filter(record => record.source === 'game').length, 1)
+})
+test('saving a history record keeps history and adds one saved copy to all records', async () => {
+  const snapshot = { board: Array.from({ length: 9 }, () => Array(9).fill(null)), moves: [{ stone: 'black', coordinate: 'D6' }], result: { winner: 'black', loser: 'white', reason: 'resignation' } }
+  const history = await service.saveGameHistory(snapshot, { title: '历史对局', ruleSet: 'chinese', komi: 7.5, boardSize: 9 })
+  const saved = await service.saveHistoryRecord(history.id)
+  assert.notEqual(saved.id, history.id)
+  assert.equal(saved.source, 'game')
+  const duplicate = await service.saveHistoryRecord(history.id)
+  const records = (await service.listLibrary()).records
+  assert.equal(duplicate.id, saved.id)
+  assert.equal(records.find(record => record.id === history.id).source, 'history')
+  assert.equal(records.filter(record => record.source === 'history').length, 1)
+  assert.equal(records.filter(record => record.source === 'game').length, 1)
 })
 test('backup keeps deliberate duplicates and recent-open metadata', async () => {
   await service.importSgfFiles([new File([contents], 'a.sgf')])
@@ -197,7 +266,8 @@ test('collection rename/delete only changes organization, not game content', asy
   const next = await service.deleteCollection(collection.id)
   assert.equal(next.records.length, 1)
   assert.deepEqual(next.records[0].collectionIds, [])
-  assert.equal(next.records[0].sgf, contents)
+  assert.equal(next.records[0].originalSgf, contents)
+  assert.equal(domain.readSgf(next.records[0].sgf)[0].data.DT[0], next.records[0].date)
 })
 test('saving further research resets completed state and preserves exact Chinese komi', async () => {
   const record = await service.createLibraryRecord({ title: '训练', ruleSet: 'chinese', komi: 7.5 })
