@@ -5,6 +5,8 @@ import { GridComponent, TooltipComponent } from 'echarts/components'
 import { init, use, type EChartsType } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { WinratePoint } from '../../services/katago'
+import { winratePly, winrateSeries } from './winrateChartData'
+import { positionScore } from '../../domain/scoring'
 
 use([LineChart, GridComponent, TooltipComponent, CanvasRenderer])
 
@@ -16,18 +18,19 @@ const props = defineProps<{
 const host = ref<HTMLDivElement | null>(null)
 let chart: EChartsType | null = null
 let observer: ResizeObserver | null = null
-const visiblePoints = computed(() => {
-  const blackSelected = props.perspective === 'black'
-  return props.points.filter((point) => point.moveNumber > 0 && (blackSelected ? point.moveNumber % 2 === 1 : point.moveNumber % 2 === 0))
-})
+const visiblePoints = computed(() => winrateSeries(props.points, props.perspective))
 
 function updateChart() {
   if (!chart) return
-  const points = visiblePoints.value
+  const seriesPoints = visiblePoints.value
+  const points = seriesPoints.map(({ point }) => point)
   const isBlack = props.perspective === 'black'
   const perspectiveLabel = isBlack ? '黑方' : '白方'
   const winrateColor = isBlack ? '#0078d4' : '#106ebe'
-  const selectedLead = (point: WinratePoint) => isBlack ? point.scoreLead : -point.scoreLead
+  const selectedLead = (point: WinratePoint) => {
+    const lead = positionScore(point.black / 100, point.scoreLead).lead
+    return isBlack ? lead : -lead
+  }
   const formatLead = (value: number) => `${value > 0 ? '+' : ''}${value.toFixed(1)} 目`
   chart.setOption({
     animationDuration: 180,
@@ -38,28 +41,30 @@ function updateChart() {
         const items = (Array.isArray(params) ? params : [params]) as Array<{
           dataIndex?: number
           axisValue?: string | number
-          value?: number
+          value?: [number, number]
         }>
         const item = items[0] ?? {}
         const index = item.dataIndex ?? 0
         const point = points[index]
         return [
-          `第 ${item.axisValue ?? points[index]?.moveNumber ?? '-'} 手`,
-          `${perspectiveLabel}胜率：${Number(point ? (isBlack ? point.black : point.white) : 0).toFixed(1)}%`,
+          `第 ${points[index] ? winratePly(points[index]) : item.axisValue ?? '-'} 手`,
+          `${perspectiveLabel}胜率：${Number(point ? seriesPoints[index]?.value : 0).toFixed(1)}%`,
           `${perspectiveLabel}目差：${formatLead(point ? selectedLead(point) : 0)}`,
         ].join('<br/>')
       },
     },
     xAxis: {
-      type: 'category',
-      boundaryGap: true,
+      type: 'value',
+      min: 0,
+      max: Math.max(1, ...points.map((point) => winratePly(point))),
+      minInterval: 1,
+      boundaryGap: false,
       name: '手数',
       nameGap: 8,
       nameTextStyle: { color: '#605e5c', fontSize: 10 },
       axisLine: { lineStyle: { color: '#d1d1d1' } },
       axisTick: { show: false },
       axisLabel: { color: '#605e5c', fontSize: 10 },
-      data: points.map((point) => point.moveNumber),
     },
     yAxis: {
       type: 'value',
@@ -73,11 +78,11 @@ function updateChart() {
       {
         name: `${perspectiveLabel}胜率`,
         type: 'line',
-        data: points.map((point) => (isBlack ? point.black : point.white)),
+        data: seriesPoints.map(({ point, value }) => [winratePly(point), value]),
         showSymbol: points.length < 18,
         symbol: 'circle',
         symbolSize: 5,
-        smooth: 0.18,
+        smooth: false,
         lineStyle: { width: 2, color: winrateColor },
         itemStyle: { color: winrateColor },
         areaStyle: { color: winrateColor, opacity: 0.06 },

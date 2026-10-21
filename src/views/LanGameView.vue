@@ -168,7 +168,7 @@ async function requestTerritory() {
       'normal',
       undefined,
       config?.ruleSet ?? 'chinese',
-      config?.komi ?? 7.5,
+      config?.komi ?? 3.75,
       config?.handicap ?? 0,
       RECOMMENDATION_BUDGETS.high,
     )

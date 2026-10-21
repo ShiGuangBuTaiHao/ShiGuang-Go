@@ -85,8 +85,8 @@ const timeOptions: SetupDropdownOption[] = [
 ]
 
 const rankOptions: SetupDropdownOption[] = [
-  ...AMATEUR_STRENGTHS.map((value) => ({ value, label: AI_STRENGTHS[value].label, group: '业余级' })),
-  ...DAN_STRENGTHS.map((value) => ({ value, label: AI_STRENGTHS[value].label, group: '段位' })),
+  ...AMATEUR_STRENGTHS.map((value) => ({ value, label: AI_STRENGTHS[value].label, group: AI_STRENGTHS[value].group })),
+  ...DAN_STRENGTHS.map((value) => ({ value, label: AI_STRENGTHS[value].label, group: AI_STRENGTHS[value].group })),
 ]
 
 const customMainTimeOptions: SetupDropdownOption[] = CUSTOM_MAIN_TIME_OPTIONS.map((value) => ({

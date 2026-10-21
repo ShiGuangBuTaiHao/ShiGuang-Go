@@ -5,6 +5,7 @@ import { analyzePosition, cancelAnalysis, getEngineStatus, type AnalysisMode, ty
 import { cancelGnuGoRequest, estimateWithGnuGo, type GnuGoEstimate } from '../services/gnugo'
 import { positionFromCoordinate } from '../domain/go'
 import type { useResearchStore } from '../stores/research'
+import { analysisRequestOrder } from '../components/analysis/winrateChartData'
 
 export function useResearchAnalysis(research: ReturnType<typeof useResearchStore>) {
   const cache = shallowRef<Record<string, { signature: string; value: KataGoAnalysis }>>({})
@@ -15,7 +16,9 @@ export function useResearchAnalysis(research: ReturnType<typeof useResearchStore
   }))
   const analysis = computed(() => {
     const entry = cache.value[research.current.id]
-    return entry?.signature === position.value.signature ? entry.value : null
+    return entry?.signature === position.value.signature
+      ? { ...entry.value, turnNumber: position.value.turnNumber }
+      : null
   })
   const status = ref<'idle' | 'loading' | 'error'>('idle')
   const error = ref('')
@@ -34,8 +37,9 @@ export function useResearchAnalysis(research: ReturnType<typeof useResearchStore
   const candidates = computed(() => [...(analysis.value?.moveInfos ?? [])].sort((a, b) => a.order - b.order).slice(0, 5))
   const history = computed(() => research.path.flatMap((node) => {
     const entry = cache.value[node.id]
-    if (!entry || entry.signature !== researchAnalysisPosition({ ...research.tree, currentNodeId: node.id }).signature) return []
-    return [{ moveNumber: node.snapshot.moveNumber, black: entry.value.rootInfo.winrate * 100, white: 100 - entry.value.rootInfo.winrate * 100, scoreLead: entry.value.rootInfo.scoreLead }]
+    const nodePosition = researchAnalysisPosition({ ...research.tree, currentNodeId: node.id })
+    if (!entry || entry.signature !== nodePosition.signature) return []
+    return [{ moveNumber: node.snapshot.moveNumber, ply: nodePosition.turnNumber, black: entry.value.rootInfo.winrate * 100, white: 100 - entry.value.rootInfo.winrate * 100, scoreLead: entry.value.rootInfo.scoreLead, player: entry.value.rootInfo.currentPlayer }]
   }))
   const previewTree = computed(() => preview.value ? appendResearchVariation(research.tree, preview.value.coordinates.slice(0, preview.value.step)).tree : null)
   const displayNode = computed(() => previewTree.value ? currentResearchNode(previewTree.value) : research.current)
@@ -51,10 +55,12 @@ export function useResearchAnalysis(research: ReturnType<typeof useResearchStore
       const engine = await getEngineStatus()
       if (requestToken !== token) return
       if (!engine.configured || engine.error) throw new Error(engine.error || engine.detail || '分析引擎未就绪')
-      for (const { nodeId, position: requestPosition } of positions) {
+      // The root position is the chart origin. Prioritize it after navigating
+      // back from a long variation so move zero appears immediately.
+      for (const { nodeId, position: requestPosition } of analysisRequestOrder(positions)) {
         const cached = cache.value[nodeId]
         if (cached?.signature === requestPosition.signature) continue
-        const value = await analyzePosition(requestPosition.moves, mode.value, 'normal', undefined, research.tree.ruleSet, research.tree.ruleSet === 'chinese' ? research.tree.komi * 2 : research.tree.komi, 0, undefined, requestPosition)
+        const value = await analyzePosition(requestPosition.moves, mode.value, 'normal', undefined, research.tree.ruleSet, research.tree.komi, 0, undefined, requestPosition)
         if (requestToken !== token || disposed) return
         cache.value = { ...cache.value, [nodeId]: { signature: requestPosition.signature, value: { ...value, turnNumber: requestPosition.turnNumber } } }
       }

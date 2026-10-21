@@ -40,6 +40,7 @@ import VariationTree from "../components/research/VariationTree.vue";
 import ResearchEvaluation from "../components/research/ResearchEvaluation.vue";
 import GameSettingsDialog from "../components/game/GameSettingsDialog.vue";
 import { useResearchAnalysis } from "../composables/useResearchAnalysis";
+import { displayMoveNumber } from "../components/analysis/winrateChartData";
 import { useResearchStore } from "../stores/research";
 import { loadBoardStyle, saveBoardStyle } from "../domain/boardTheme";
 import { loadResearchDisplaySettings, saveResearchDisplaySettings } from "../domain/viewSettings";
@@ -198,6 +199,13 @@ const filteredRecords = computed(() => {
 const displayPath = computed(() =>
   researchPath(previewTree.value ?? tree.value),
 );
+const displayMove = computed(() => displayMoveNumber({
+  moveNumber: Math.max(0, current.value.snapshot.moveNumber - 1),
+  ply: current.value.snapshot.moveNumber,
+  black: 0,
+  white: 0,
+  scoreLead: 0,
+}));
 const moveNumbers = computed<MoveNumberMarker[]>(() =>
   displayPath.value.flatMap((node) =>
     node.move && !node.move.pass
@@ -796,7 +804,7 @@ onBeforeUnmount(() => {
         >
           <div class="research-toolbar-status" aria-label="当前局面信息">
             <span class="toolbar-move"
-              >第 {{ current.snapshot.moveNumber }} 手</span
+              >第 {{ displayMove }} 手</span
             >
             <span class="toolbar-context"
               >{{ onMainLine ? "主线" : "变化"

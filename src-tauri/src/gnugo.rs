@@ -301,16 +301,9 @@ fn adjudicate(
         request,
         Duration::from_secs(120),
         |send| {
-            // Never run the finishing simulation on an unsettled position,
-            // including when the IPC command is invoked without the UI gate.
-            let position = estimate_from_process(send, "B", true)?;
-            let readiness = position.readiness.expect("readiness requested");
-            if !readiness.ready {
-                return Err(format!(
-                    "尚未收官，暂不能数子：{}",
-                    readiness.reasons.join("；")
-                ));
-            }
+            // final_score is the authoritative result. The influence estimate
+            // is advisory only and must not veto an otherwise valid terminal
+            // position just because its bounds are wide.
             let final_score = send("final_score 0")?.join(" ");
             let dead_stones = send("final_status_list dead 0")?
                 .iter()
@@ -650,13 +643,13 @@ mod tests {
     }
 
     #[test]
-    fn unsettled_position_never_requests_final_score() {
+    fn advisory_estimate_never_vetoes_authoritative_final_score() {
         let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
         let Ok(executable) = discover(&directory, &directory) else {
             return;
         };
         let state = GnuGoState::default();
-        let error = adjudicate(
+        let result = adjudicate(
             state.clone(),
             executable,
             RefereeRequest {
@@ -669,8 +662,8 @@ mod tests {
                 komi: 7.5,
             },
         )
-        .unwrap_err();
-        assert!(error.contains("尚未收官"));
+        .unwrap();
+        assert!(result.final_score.starts_with('B') || result.final_score.starts_with('W'));
         assert!(state.0.lock().unwrap().active.is_none());
     }
 

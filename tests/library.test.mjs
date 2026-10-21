@@ -214,6 +214,20 @@ test('game archiving preserves moves, passes and authoritative referee result', 
   await service.saveGameRecord(snapshot, { title: '对局', ruleSet: 'chinese', komi: 7.5 })
   assert.equal((await service.listLibrary()).records.length, 1)
 })
+test('KataGo archive keeps engine points while Chinese display uses zi', () => {
+  const snapshot = {
+    board: Array.from({ length: 19 }, () => Array(19).fill(null)),
+    moves: [],
+    result: { winner: 'white', loser: 'black', reason: 'score', score: {
+      engine: 'katago', finalScore: 'W+6.5', margin: -6.5, komi: 7.5, ruleSet: 'chinese', deadStones: [],
+    } },
+  }
+  const root = domain.readSgf(domain.gameToSgf(snapshot, { ruleSet: 'chinese', komi: 7.5, boardSize: 19 }))[0]
+  assert.deepEqual(root.data.RE, ['W+6.5'])
+  assert.deepEqual(root.data.KM, ['7.5'])
+  assert.deepEqual(root.data.RU, ['Chinese'])
+})
+
 test('saving a game creates a history record even when identical SGF was imported first', async () => {
   const snapshot = { board: Array.from({ length: 9 }, () => Array(9).fill(null)), moves: [{ stone: 'black', coordinate: 'D6' }], result: { winner: 'black', loser: 'white', reason: 'resignation' } }
   const info = { title: '重复棋谱', black: '黑方', white: '白方', ruleSet: 'chinese', komi: 7.5, boardSize: 9, date: new Date().toLocaleDateString('en-CA') }

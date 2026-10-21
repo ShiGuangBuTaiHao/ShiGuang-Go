@@ -95,6 +95,7 @@ impl KataGoState {
                 initial_stones: None,
                 initial_player: None,
                 board_size: None,
+                search_profile: None,
             };
             run_analysis(runtime, &self.data_dir, &mut slot, request, true, None).map(|_| ())
         })();
@@ -181,6 +182,8 @@ pub struct AnalyzeRequest {
     initial_player: Option<String>,
     #[serde(default)]
     board_size: Option<usize>,
+    #[serde(default)]
+    search_profile: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -296,34 +299,169 @@ fn analyze_params(mode: &str, strength: &str) -> AnalyzeParams {
     }
 }
 
-fn human_profile_is_dan(profile: &str) -> bool {
-    profile.to_ascii_lowercase().ends_with('d')
+fn human_profile_rank(profile: &str) -> Option<(u32, bool)> {
+    let normalized = profile.to_ascii_lowercase();
+    let dan = normalized.ends_with('d');
+    if !dan && !normalized.ends_with('k') {
+        return None;
+    }
+    normalized[..normalized.len() - 1]
+        .rsplit('_')
+        .next()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|rank| (1..=20).contains(rank))
+        .map(|rank| (rank, dan))
+}
+
+fn human_profile_rank_progress(profile: &str) -> Option<f64> {
+    let (rank, dan) = human_profile_rank(profile)?;
+    Some(if dan {
+        (19 + rank) as f64 / 28.0
+    } else {
+        (20 - rank) as f64 / 28.0
+    })
+}
+
+fn human_profile_search_progress(profile: &str) -> Option<f64> {
+    human_profile_rank_progress(profile).map(|progress| progress.powf(1.5))
 }
 
 fn human_profile_visits(mode: &str, profile: &str) -> u32 {
     if mode == "deep" {
         return 5000;
     }
-    if human_profile_is_dan(profile) {
-        return 800;
-    }
-    let kyu = profile
-        .trim_end_matches('k')
-        .rsplit('_')
-        .next()
-        .and_then(|value| value.parse::<u32>().ok())
-        .unwrap_or(20);
-    if kyu >= 16 {
-        300
-    } else if kyu >= 11 {
-        400
-    } else if kyu >= 6 {
-        500
-    } else if kyu >= 3 {
-        650
+    let Some(progress) = human_profile_rank_progress(profile) else {
+        return 1;
+    };
+    (40.0 + (1200.0 - 40.0) * progress.powi(2)).round() as u32
+}
+
+fn human_sl_settings(profile: &str) -> Value {
+    let progress = human_profile_search_progress(profile).unwrap_or(0.0);
+    let root_explore = progress * 0.8;
+    let cpuct = 0.2 + progress * 1.8;
+    json!({
+        "humanSLProfile": profile,
+        "ignorePreRootHistory": false,
+        "rootNumSymmetriesToSample": 2,
+        "humanSLRootExploreProbWeightless": root_explore,
+        "humanSLRootExploreProbWeightful": 0.0,
+        "humanSLCpuctPermanent": cpuct,
+        "useUncertainty": false,
+        "subtreeValueBiasFactor": 0.0,
+        "useNoisePruning": false,
+    })
+}
+
+fn target_visits(request: &AnalyzeRequest, params: &AnalyzeParams) -> u32 {
+    request
+        .max_visits
+        .or_else(|| {
+            request
+                .human_profile
+                .as_deref()
+                .map(|profile| human_profile_visits(&request.mode, profile))
+        })
+        .unwrap_or(params.target_visits)
+        .clamp(1, 100_000)
+}
+
+fn analyze_with_process(
+    process: &mut KataGoProcess,
+    request: AnalyzeRequest,
+    timeout: Duration,
+    cancel: Option<&AtomicBool>,
+) -> Result<KataGoAnalysis, String> {
+    process.request_id += 1;
+    let request_id = process.request_id.to_string();
+    let params = analyze_params(&request.mode, &request.strength);
+    let target_visits = target_visits(&request, &params);
+    let response_timeout = if process.request_id == 1 {
+        params.timeout + Duration::from_secs(120)
     } else {
-        800
+        timeout.min(params.timeout.max(Duration::from_secs(10)))
+    };
+    let turn_number = request.moves.len();
+    let human_profile = request.human_profile.clone();
+    let (default_initial_stones, moves, default_current_player, _) =
+        split_opening_sequence(request.moves, request.handicap);
+    let initial_stones = request
+        .initial_stones
+        .map(|stones| {
+            stones
+                .into_iter()
+                .map(|mv| [mv.player.to_uppercase(), mv.coordinate.to_uppercase()])
+                .collect::<Vec<[String; 2]>>()
+        })
+        .unwrap_or(default_initial_stones);
+    let custom_initial_player = request.initial_player.is_some();
+    let (initial_player, current_player) = analysis_players(
+        &moves,
+        request.initial_player.as_deref(),
+        default_current_player,
+    );
+    let board_size = request.board_size.unwrap_or(19);
+    if ![9, 13, 19].contains(&board_size) {
+        return Err("仅支持 9、13、19 路棋盘".to_string());
     }
+    let analysis_turn = moves.len();
+    let mut query = json!({
+        "id": request_id,
+        "moves": moves,
+        "initialStones": initial_stones,
+        "rules": request.rule_set,
+        "komi": kata_go_komi(request.komi)?,
+        "boardXSize": board_size,
+        "boardYSize": board_size,
+        "analyzeTurns": [analysis_turn],
+        "maxVisits": target_visits,
+        "includePolicy": true,
+        "includeOwnership": true,
+        "includeOwnershipStdev": true
+    });
+    if request.handicap > 0 || custom_initial_player {
+        query["initialPlayer"] = json!(initial_player);
+    }
+    let mut override_settings = serde_json::Map::new();
+    if let Some(profile) = human_profile.as_deref() {
+        if let Some(settings) = human_sl_settings(profile).as_object() {
+            override_settings.extend(settings.clone());
+        }
+    }
+    if request.search_profile.as_deref() == Some("recommendation") {
+        // Recommendation search should favor best-move accuracy over the
+        // wider candidate coverage used by general study analysis.
+        override_settings.insert("wideRootNoise".to_string(), json!(0.0));
+    }
+    if !override_settings.is_empty() {
+        query["overrideSettings"] = Value::Object(override_settings);
+    }
+    send_json(&mut process.stdin, &query)?;
+    let response = read_analysis_response(process, &request_id, response_timeout, cancel)?;
+    if response.ownership.len() != board_size * board_size {
+        return Err("KataGo 未返回完整 ownership 数据".to_string());
+    }
+    if human_profile.is_some() && response.human_policy.len() != board_size * board_size + 1 {
+        return Err("KataGo 未返回完整 Human SL policy 数据".to_string());
+    }
+    let mut move_infos = response.move_infos;
+    move_infos.sort_by_key(|info| info.order);
+    let mut root_info = response.root_info;
+    if root_info.current_player.is_empty() {
+        root_info.current_player = current_player;
+    }
+    Ok(KataGoAnalysis {
+        turn_number: turn_number as u32,
+        root_info,
+        move_infos,
+        ownership: response.ownership,
+        ownership_stdev: if response.ownership_stdev.len() == board_size * board_size {
+            response.ownership_stdev
+        } else {
+            vec![0.0; board_size * board_size]
+        },
+        human_policy: response.human_policy,
+    })
 }
 
 fn find_katago_executable(runtime_dir: &Path) -> Option<PathBuf> {
@@ -561,9 +699,17 @@ fn start_process(
         .open(stderr_path)
         .map_err(|e| format!("无法创建引擎日志: {e}"))?;
     let override_cfg = format!(
-        "homeDataDir={},logDir={},logToStderr=false,reportAnalysisWinratesAs=BLACK",
+        // Human SL tiering relies on visit counts being comparable. Multiple
+        // search threads make one visit schedule several neural evaluations and
+        // weaken low-visit searches, so game moves deliberately use one thread.
+        "homeDataDir={},logDir={},logToStderr=false,reportAnalysisWinratesAs=BLACK{}",
         config_path(&home_data),
-        config_path(&log_dir)
+        config_path(&log_dir),
+        if use_human_model {
+            ",numAnalysisThreads=1,numSearchThreadsPerAnalysisThread=1"
+        } else {
+            ""
+        }
     );
 
     let mut command = Command::new(&runtime.executable);
@@ -756,19 +902,21 @@ fn run_final_score_with_process(
     request: FinalScoreRequest,
 ) -> Result<FinalScoreResult, String> {
     send_gtp(&mut process.stdin, "boardsize 19")?;
-    read_gtp_response(process, Duration::from_secs(10))?;
+    // TensorRT builds the network and timing cache lazily on the first command.
+    read_gtp_response(process, Duration::from_secs(120))?;
+    let command_timeout = Duration::from_secs(10);
     send_gtp(
         &mut process.stdin,
         &format!("kata-set-rules {}", request.rule_set),
     )?;
-    read_gtp_response(process, Duration::from_secs(10))?;
+    read_gtp_response(process, command_timeout)?;
     send_gtp(
         &mut process.stdin,
-        &format!("komi {}", kata_go_komi(request.komi)),
+        &format!("komi {}", kata_go_komi(request.komi)?),
     )?;
-    read_gtp_response(process, Duration::from_secs(10))?;
+    read_gtp_response(process, command_timeout)?;
     send_gtp(&mut process.stdin, "clear_board")?;
-    read_gtp_response(process, Duration::from_secs(10))?;
+    read_gtp_response(process, command_timeout)?;
     for mv in request.moves {
         let player =
             if mv.player.eq_ignore_ascii_case("white") || mv.player.eq_ignore_ascii_case("w") {
@@ -780,7 +928,7 @@ fn run_final_score_with_process(
             &mut process.stdin,
             &format!("play {player} {}", mv.coordinate),
         )?;
-        read_gtp_response(process, Duration::from_secs(10))?;
+        read_gtp_response(process, command_timeout)?;
     }
     send_gtp(&mut process.stdin, "final_status_list dead")?;
     let dead_stones = read_gtp_response(process, Duration::from_secs(30))?
@@ -823,13 +971,10 @@ fn run_final_score(
     let process = slot
         .as_mut()
         .ok_or_else(|| "KataGo GTP 进程不可用".to_string())?;
-    match run_final_score_with_process(process, request) {
-        Ok(result) => Ok(result),
-        Err(error) => {
-            *slot = None;
-            Err(error)
-        }
-    }
+    run_final_score_with_process(process, request).map_err(|error| {
+        *slot = None;
+        error
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -897,11 +1042,29 @@ fn current_player_from_move_count(count: usize) -> &'static str {
     }
 }
 
-fn kata_go_komi(value: f64) -> f64 {
-    // KataGo's JSON protocol accepts integer or half-integer komi values.
-    // Keep the product-facing Chinese 3¾ display, but send the nearest legal
-    // engine value so the request remains valid.
-    (value * 2.0).round() / 2.0
+fn analysis_players(
+    moves: &[[String; 2]],
+    explicit_initial: Option<&str>,
+    default_player: &str,
+) -> (String, String) {
+    let initial = explicit_initial
+        .or_else(|| moves.first().map(|mv| mv[0].as_str()))
+        .unwrap_or(default_player)
+        .to_string();
+    let current = moves
+        .last()
+        .map(|mv| if mv[0] == "B" { "W" } else { "B" }.to_string())
+        .unwrap_or_else(|| initial.clone());
+    (initial, current)
+}
+
+fn kata_go_komi(value: f64) -> Result<f64, String> {
+    // All backend callers use points. Never hide a missing zi conversion by
+    // rounding 3.75 to 4: that changes both the komi and possibly the winner.
+    if !value.is_finite() || value.abs() > 1000.0 || (value * 2.0).fract() != 0.0 {
+        return Err("KataGo 贴目必须是有限的整数或半整数目（中国规则请先将子转换为目）".into());
+    }
+    Ok(value)
 }
 
 fn split_opening_sequence(
@@ -951,125 +1114,9 @@ fn run_analysis(
         return Err("Human SL 模型未配置，请检查 resources/katago-human".to_string());
     }
     let process = ensure_process(slot, runtime, data_dir, use_human_model)?;
-    process.request_id += 1;
-    let request_id = process.request_id.to_string();
     let params = analyze_params(&request.mode, &request.strength);
-    // TensorRT may build/load the network on the first request. Give that
-    // cold start extra time without slowing down later position analyses.
-    let response_timeout = if process.request_id == 1 {
-        params.timeout + Duration::from_secs(120)
-    } else {
-        params.timeout
-    };
-    let turn_number = request.moves.len();
-    let human_profile = request.human_profile.clone();
-    let (default_initial_stones, moves, default_current_player, _) =
-        split_opening_sequence(request.moves, request.handicap);
-    let initial_stones = request
-        .initial_stones
-        .map(|stones| {
-            stones
-                .into_iter()
-                .map(|mv| [mv.player.to_uppercase(), mv.coordinate.to_uppercase()])
-                .collect::<Vec<[String; 2]>>()
-        })
-        .unwrap_or(default_initial_stones);
-    let custom_initial_player = request.initial_player.is_some();
-    let initial_player = request
-        .initial_player
-        .unwrap_or_else(|| default_current_player.to_string());
-    let current_player = if custom_initial_player {
-        moves
-            .last()
-            .map(|mv| if mv[0] == "B" { "W" } else { "B" }.to_string())
-            .unwrap_or_else(|| initial_player.clone())
-    } else {
-        default_current_player.to_string()
-    };
-    let board_size = request.board_size.unwrap_or(19);
-    if ![9, 13, 19].contains(&board_size) {
-        return Err("仅支持 9、13、19 路棋盘".to_string());
-    }
-    let analysis_turn = moves.len();
-    let target_visits = human_profile
-        .as_deref()
-        .map(|profile| human_profile_visits(&request.mode, profile))
-        .unwrap_or_else(|| {
-            request
-                .max_visits
-                .unwrap_or(params.target_visits)
-                .clamp(1, 100_000)
-        });
-    let mut query = json!({
-        "id": request_id,
-        "moves": moves,
-        "initialStones": initial_stones,
-        "rules": request.rule_set,
-        "komi": kata_go_komi(request.komi),
-        "boardXSize": board_size,
-        "boardYSize": board_size,
-        "analyzeTurns": [analysis_turn],
-        "maxVisits": target_visits,
-        "includePolicy": true,
-        "includeOwnership": true,
-        "includeOwnershipStdev": true
-    });
-    if request.handicap > 0 || custom_initial_player {
-        query["initialPlayer"] = json!(initial_player);
-    }
-    if let Some(profile) = human_profile.as_deref() {
-        let settings = json!({
-            "humanSLProfile": profile,
-            "ignorePreRootHistory": false,
-            "rootNumSymmetriesToSample": 2,
-            "humanSLRootExploreProbWeightless": 0.5,
-            "humanSLCpuctPermanent": 2.0,
-            "useUncertainty": false,
-            "subtreeValueBiasFactor": 0.0,
-            "useNoisePruning": false,
-        });
-        query["overrideSettings"] = settings;
-    }
-    if let Err(error) = send_json(&mut process.stdin, &query) {
-        *slot = None;
-        return Err(error);
-    }
-    let response = match read_analysis_response(process, &request_id, response_timeout, cancel) {
-        Ok(response) => response,
-        Err(error) => {
-            // A timed-out analysis may still be searching. Drop the process so
-            // its late JSON cannot contaminate the next request.
-            *slot = None;
-            return Err(error);
-        }
-    };
-    if response.move_infos.is_empty() {
-        return Err("KataGo 未返回任何候选点".to_string());
-    }
-    if response.ownership.len() != board_size * board_size {
-        return Err("KataGo 未返回完整 ownership 数据".to_string());
-    }
-    if human_profile.is_some() && response.human_policy.len() != board_size * board_size + 1 {
-        return Err("KataGo 未返回完整 Human SL policy 数据".to_string());
-    }
-    let mut move_infos = response.move_infos;
-    move_infos.sort_by_key(|info| info.order);
-    let mut root_info = response.root_info;
-    if root_info.current_player.is_empty() {
-        root_info.current_player = current_player;
-    }
-    Ok(KataGoAnalysis {
-        turn_number: turn_number as u32,
-        root_info,
-        move_infos,
-        ownership: response.ownership,
-        ownership_stdev: if response.ownership_stdev.len() == board_size * board_size {
-            response.ownership_stdev
-        } else {
-            vec![0.0; board_size * board_size]
-        },
-        human_policy: response.human_policy,
-    })
+    let timeout = params.timeout;
+    analyze_with_process(process, request, timeout, cancel)
 }
 
 fn slot_running(slot: &mut Option<KataGoProcess>) -> bool {
@@ -1288,13 +1335,82 @@ mod tests {
     }
 
     #[test]
-    fn human_profile_search_is_tiered_by_rank() {
-        assert!(!super::human_profile_is_dan("rank_5k"));
-        assert!(super::human_profile_is_dan("rank_1d"));
-        assert_eq!(super::human_profile_visits("fast", "rank_20k"), 300);
-        assert_eq!(super::human_profile_visits("fast", "rank_5k"), 650);
-        assert_eq!(super::human_profile_visits("fast", "rank_9d"), 800);
+    fn human_profile_search_budget_is_continuous_and_9d_is_the_maximum() {
+        assert_eq!(super::human_profile_visits("fast", "rank_20k"), 40);
+        assert!(super::human_profile_visits("fast", "rank_10k") > 40);
+        assert!(
+            super::human_profile_visits("fast", "rank_1d")
+                > super::human_profile_visits("fast", "rank_1k")
+        );
+        assert_eq!(super::human_profile_visits("fast", "rank_9d"), 1200);
         assert_eq!(super::human_profile_visits("deep", "rank_5k"), 5000);
+        let ordered = (0..=28).map(|index| {
+            if index < 20 {
+                format!("rank_{}k", 20 - index)
+            } else {
+                format!("rank_{}d", index - 19)
+            }
+        });
+        let budgets = ordered
+            .map(|profile| super::human_profile_visits("fast", &profile))
+            .collect::<Vec<_>>();
+        assert!(budgets.windows(2).all(|pair| pair[0] <= pair[1]));
+    }
+
+    #[test]
+    fn human_sl_search_settings_scale_continuously_across_rank_boundaries() {
+        let lowest = super::human_sl_settings("rank_20k");
+        assert_eq!(lowest["humanSLRootExploreProbWeightless"], 0.0);
+        assert_eq!(lowest["humanSLCpuctPermanent"], 0.2);
+
+        let highest = super::human_sl_settings("rank_9d");
+        assert_eq!(highest["humanSLProfile"], "rank_9d");
+        assert_eq!(highest["humanSLRootExploreProbWeightless"], 0.8);
+        assert_eq!(highest["humanSLCpuctPermanent"], 2.0);
+
+        let ordered = (0..=28).map(|index| {
+            if index < 20 {
+                format!("rank_{}k", 20 - index)
+            } else {
+                format!("rank_{}d", index - 19)
+            }
+        });
+        let settings = ordered
+            .map(|profile| super::human_sl_settings(&profile))
+            .collect::<Vec<_>>();
+        assert!(settings.windows(2).all(|pair| {
+            pair[0]["humanSLRootExploreProbWeightless"]
+                .as_f64()
+                .unwrap()
+                <= pair[1]["humanSLRootExploreProbWeightless"]
+                    .as_f64()
+                    .unwrap()
+                && pair[0]["humanSLCpuctPermanent"]
+                    .as_f64()
+                    .unwrap()
+                    <= pair[1]["humanSLCpuctPermanent"]
+                        .as_f64()
+                        .unwrap()
+        }));
+        assert_eq!(settings[19]["humanSLProfile"], "rank_1k");
+        assert_eq!(settings[20]["humanSLProfile"], "rank_1d");
+    }
+
+    #[test]
+    fn explicit_strength_budget_overrides_human_profile_default() {
+        let request: super::AnalyzeRequest = serde_json::from_value(serde_json::json!({
+            "moves": [],
+            "mode": "fast",
+            "strength": "normal",
+            "humanProfile": "rank_20k",
+            "maxVisits": 4,
+            "ruleSet": "chinese",
+            "komi": 7.5,
+            "handicap": 0
+        }))
+        .expect("valid analysis request");
+        let params = super::analyze_params("fast", "normal");
+        assert_eq!(super::target_visits(&request, &params), 4);
     }
 
     #[test]
@@ -1334,9 +1450,157 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_quarter_komi_for_katago_protocol() {
-        assert_eq!(super::kata_go_komi(3.75), 4.0);
-        assert_eq!(super::kata_go_komi(6.5), 6.5);
+    fn analysis_initial_player_is_not_the_side_after_replaying_moves() {
+        let moves = vec![["B".to_string(), "D4".to_string()]];
+        assert_eq!(super::analysis_players(&moves, None, "W"), ("B".into(), "W".into()));
+        let moves = vec![moves[0].clone(), ["W".into(), "Q16".into()]];
+        assert_eq!(super::analysis_players(&moves, None, "B"), ("B".into(), "B".into()));
+        let setup_moves = vec![["W".into(), "pass".into()]];
+        assert_eq!(super::analysis_players(&setup_moves, Some("W"), "B"), ("W".into(), "B".into()));
+        assert_eq!(super::analysis_players(&[], Some("W"), "B"), ("W".into(), "W".into()));
+        assert_eq!(super::analysis_players(&[], None, "W"), ("W".into(), "W".into()));
+    }
+
+    #[test]
+    fn validates_point_komi_without_silent_rounding() {
+        for value in [0.0, 0.5, 7.5, 6.5, -0.5] {
+            assert_eq!(super::kata_go_komi(value), Ok(value));
+        }
+        for value in [3.75, f64::NAN, f64::INFINITY, 1000.5] {
+            assert!(super::kata_go_komi(value).is_err());
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the local KataGo executable and model"]
+    fn verifies_local_chinese_japanese_korean_scoring() {
+        let resources = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+        let runtime = discover_runtime(&resources, &resources).expect("local KataGo runtime");
+        let data_dir = std::env::temp_dir().join("shiguang-go-scoring-rules-test");
+        let mut slot = None;
+        // Fully settled 19x19 position: Black owns 181 intersections, White
+        // owns 180. Black has three one-point eyes, White has two. Both have
+        // played 178 stones, so Black leads by one point before komi.
+        let letters = b"ABCDEFGHJKLMNOPQRST";
+        let mut black = Vec::new();
+        let mut white = Vec::new();
+        for row in 0..19 {
+            for col in 0..19 {
+                if [(2, 2), (4, 2), (6, 2), (2, 16), (4, 16)].contains(&(row, col)) {
+                    continue;
+                }
+                let coordinate = format!("{}{}", letters[col] as char, 19 - row);
+                if col < 9 || (col == 9 && row % 2 == 0) {
+                    black.push(coordinate);
+                } else {
+                    white.push(coordinate);
+                }
+            }
+        }
+        assert_eq!(black.len(), 178);
+        assert_eq!(white.len(), 178);
+        let mut moves = Vec::new();
+        for (b, w) in black.iter().zip(white.iter()) {
+            moves.push(GtpMove { player: "B".into(), coordinate: b.clone() });
+            moves.push(GtpMove { player: "W".into(), coordinate: w.clone() });
+        }
+        // These are real passes from the fixture, not passes injected by the scorer.
+        moves.push(GtpMove { player: "B".into(), coordinate: "pass".into() });
+        moves.push(GtpMove { player: "W".into(), coordinate: "pass".into() });
+        for (rule_set, komi, expected) in [
+            ("chinese", 7.5, "W+6.5"),
+            ("japanese", 6.5, "W+5.5"),
+            ("korean", 6.5, "W+5.5"),
+            ("chinese", 0.5, "B+0.5"),
+            ("japanese", 0.0, "B+1.0"),
+            ("chinese", 1.0, "0"),
+            ("japanese", 1.0, "0"),
+        ] {
+            let result = super::run_final_score(&runtime, &data_dir, &mut slot, super::FinalScoreRequest {
+                moves: moves.clone(), rule_set: rule_set.into(), komi,
+            }).expect("live rule-specific score");
+            println!("{rule_set} komi={komi}: {} dead={:?}", result.final_score, result.dead_stones);
+            assert_eq!(result.final_score, expected, "{rule_set}, komi={komi}");
+            assert!(result.dead_stones.is_empty());
+        }
+        // The final board is identical, but White first sacrifices A19.
+        // Area scoring is unchanged; territory scoring adds the prisoner.
+        let mut captured_moves = vec![
+            GtpMove { player: "B".into(), coordinate: "B19".into() },
+            GtpMove { player: "W".into(), coordinate: "A19".into() },
+            GtpMove { player: "B".into(), coordinate: "A18".into() },
+        ];
+        for (index, w) in white.iter().enumerate() {
+            captured_moves.push(GtpMove { player: "W".into(), coordinate: w.clone() });
+            if let Some(b) = black.iter().filter(|point| !["B19", "A18"].contains(&point.as_str())).nth(index) {
+                captured_moves.push(GtpMove { player: "B".into(), coordinate: b.clone() });
+            }
+        }
+        for (rule_set, expected) in [("chinese", "B+1.0"), ("japanese", "B+2.0"), ("korean", "B+2.0")] {
+            let result = super::run_final_score(&runtime, &data_dir, &mut slot, super::FinalScoreRequest {
+                moves: captured_moves.clone(), rule_set: rule_set.into(), komi: 0.0,
+            }).expect("live captured-prisoner score");
+            println!("{rule_set} captured white stone: {}", result.final_score);
+            assert_eq!(result.final_score, expected);
+            assert!(result.dead_stones.is_empty());
+        }
+        // Enlarge one Black eye and leave a living-on-board but dead White
+        // stone inside it. Area is unchanged; territory gains two empty
+        // points and one prisoner compared with the original fixture.
+        let mut dead_moves = moves.iter()
+            .filter(|mv| !["D17", "E17", "pass"].contains(&mv.coordinate.as_str()))
+            .cloned().collect::<Vec<_>>();
+        dead_moves.push(GtpMove { player: "W".into(), coordinate: "C17".into() });
+        for (rule_set, komi, expected) in [
+            ("chinese", 7.5, "W+6.5"),
+            ("japanese", 6.5, "W+2.5"),
+            ("korean", 6.5, "W+2.5"),
+        ] {
+            let result = super::run_final_score(&runtime, &data_dir, &mut slot, super::FinalScoreRequest {
+                moves: dead_moves.clone(), rule_set: rule_set.into(), komi,
+            }).expect("live dead-stone score");
+            println!("{rule_set} dead white stone: {} dead={:?}", result.final_score, result.dead_stones);
+            assert_eq!(result.final_score, expected);
+            assert_eq!(result.dead_stones, vec!["C17"]);
+        }
+    }
+
+    #[test]
+    #[ignore = "diagnostic: GTP final_score estimates, not exact seki adjudication"]
+    fn diagnoses_local_seki_score_estimation() {
+        let resources = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+        let runtime = discover_runtime(&resources, &resources).expect("local KataGo runtime");
+        let data_dir = std::env::temp_dir().join("shiguang-go-seki-diagnostic");
+        let mut slot = None;
+        let letters = b"ABCDEFGHJKLMNOPQRST";
+        // Both groups have one private eye and two shared liberties.
+        // Record exact counting separately from the neural lead estimate.
+        let mut seki_moves = Vec::new();
+        for row in 0..19 {
+            for col in 0..19 {
+                if [(2, 2), (2, 16), (1, 9), (3, 9)].contains(&(row, col)) {
+                    continue;
+                }
+                let player = if col < 9 || (col == 9 && row % 2 == 0) { "B" } else { "W" };
+                seki_moves.push(GtpMove {
+                    player: player.into(),
+                    coordinate: format!("{}{}", letters[col] as char, 19 - row),
+                });
+            }
+        }
+        for (rule_set, komi, expected) in [
+            ("chinese", 7.5, "W+4.5"),
+            ("japanese", 6.5, "W+6.5"),
+            ("korean", 6.5, "W+6.5"),
+        ] {
+            let result = super::run_final_score(&runtime, &data_dir, &mut slot, super::FinalScoreRequest {
+                moves: seki_moves.clone(), rule_set: rule_set.into(), komi,
+            }).expect("live seki score");
+            println!("{rule_set} seki: {} dead={:?}", result.final_score, result.dead_stones);
+            println!("exact agreed-position counting: {expected}; estimate matches: {}", result.final_score == expected);
+            assert!(result.final_score.starts_with("W+"));
+            assert!(result.dead_stones.is_empty());
+        }
     }
 
     #[test]
@@ -1403,6 +1667,7 @@ mod tests {
                     ]),
                     initial_player: Some("W".into()),
                     board_size: Some(size),
+                    search_profile: None,
                 },
                 false,
                 None,
@@ -1437,6 +1702,7 @@ mod tests {
             initial_stones: None,
             initial_player: None,
             board_size: None,
+            search_profile: None,
         };
         let mut analysis_slot = None;
         let mut move_slot = None;
@@ -1465,11 +1731,12 @@ mod tests {
                 max_visits: None,
                 human_profile: Some("rank_5k".to_string()),
                 rule_set: "chinese".to_string(),
-                komi: 3.75,
+                komi: 7.5,
                 handicap: 0,
                 initial_stones: None,
                 initial_player: None,
                 board_size: None,
+                search_profile: None,
             },
             true,
             None,
@@ -1500,11 +1767,198 @@ mod tests {
                 initial_stones: None,
                 initial_player: None,
                 board_size: None,
+                search_profile: None,
             },
             true,
             None,
         )
         .expect("KataGo should accept the white handicap opening position");
         assert_eq!(handicap_result.human_policy.len(), 362);
+    }
+
+    #[test]
+    #[ignore = "diagnostic: compares local Human SL profile distributions"]
+    fn diagnoses_local_human_profiles() {
+        let resources = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+        let runtime = discover_runtime(&resources, &resources)
+            .expect("local KataGo resources are unavailable");
+        let data_dir = std::env::temp_dir().join("shiguang-go-human-profile-diagnostic");
+        let mut slot = None;
+        for profile in ["rank_20k", "rank_10k", "rank_5k", "rank_9d"] {
+            let result = super::run_analysis(
+                &runtime,
+                &data_dir,
+                &mut slot,
+                super::AnalyzeRequest {
+                    moves: Vec::new(),
+                    mode: "fast".to_string(),
+                    strength: "normal".to_string(),
+                    max_visits: Some(40),
+                    human_profile: Some(profile.to_string()),
+                    rule_set: "chinese".to_string(),
+                    komi: 7.5,
+                    handicap: 0,
+                    initial_stones: None,
+                    initial_player: None,
+                    board_size: Some(19),
+                    search_profile: None,
+                },
+                true,
+                None,
+            )
+            .expect("Human SL diagnostic analysis should succeed");
+            let mut ranked = result
+                .human_policy
+                .iter()
+                .take(361)
+                .enumerate()
+                .filter(|(_, probability)| **probability > 0.0)
+                .collect::<Vec<_>>();
+            ranked.sort_by(|left, right| right.1.total_cmp(left.1));
+            println!(
+                "{profile}: positive={} top={:?} pass={:.6}",
+                ranked.len(),
+                &ranked[..5],
+                result.human_policy[361]
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "diagnostic: verifies local 1-visit and highest-dan Human SL requests"]
+    fn diagnoses_local_human_visit_extremes() {
+        let resources = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+        let runtime = discover_runtime(&resources, &resources)
+            .expect("local KataGo resources are unavailable");
+        let data_dir = std::env::temp_dir().join("shiguang-go-human-extremes-diagnostic");
+        let mut slot = None;
+        for profile in ["rank_20k", "rank_9d"] {
+            let result = super::run_analysis(
+                &runtime,
+                &data_dir,
+                &mut slot,
+                super::AnalyzeRequest {
+                    moves: Vec::new(),
+                    mode: "fast".to_string(),
+                    strength: "normal".to_string(),
+                    max_visits: None,
+                    human_profile: Some(profile.to_string()),
+                    rule_set: "chinese".to_string(),
+                    komi: 7.5,
+                    handicap: 0,
+                    initial_stones: None,
+                    initial_player: None,
+                    board_size: Some(19),
+                    search_profile: None,
+                },
+                true,
+                None,
+            )
+            .expect("Human SL extreme analysis should succeed");
+            assert_eq!(result.human_policy.len(), 362);
+            if profile == "rank_20k" {
+                assert!(result.root_info.visits >= 1);
+            } else {
+                assert!(result.root_info.visits >= 1);
+                assert!(!result.move_infos.is_empty());
+            }
+            println!(
+                "{profile}: visits={} moves={} policy={}",
+                result.root_info.visits,
+                result.move_infos.len(),
+                result.human_policy.len()
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "diagnostic: compares adjacent low-rank Human SL policies"]
+    fn diagnoses_adjacent_low_rank_policies() {
+        let resources = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+        let runtime = discover_runtime(&resources, &resources)
+            .expect("local KataGo resources are unavailable");
+        let data_dir = std::env::temp_dir().join("shiguang-go-adjacent-rank-diagnostic");
+        let mut slot = None;
+        let mut policies = Vec::new();
+        for profile in ["rank_20k", "rank_18k"] {
+            let result = super::run_analysis(
+                &runtime,
+                &data_dir,
+                &mut slot,
+                super::AnalyzeRequest {
+                    moves: Vec::new(),
+                    mode: "fast".to_string(),
+                    strength: "normal".to_string(),
+                    max_visits: None,
+                    human_profile: Some(profile.to_string()),
+                    rule_set: "chinese".to_string(),
+                    komi: 7.5,
+                    handicap: 0,
+                    initial_stones: None,
+                    initial_player: None,
+                    board_size: Some(19),
+                    search_profile: None,
+                },
+                true,
+                None,
+            )
+            .expect("adjacent rank diagnostic analysis should succeed");
+            policies.push(result.human_policy);
+        }
+        let total_variation = policies[0]
+            .iter()
+            .take(361)
+            .zip(policies[1].iter().take(361))
+            .map(|(left, right)| (left - right).abs())
+            .sum::<f64>()
+            / 2.0;
+        println!("20k vs 18k policy total variation: {total_variation:.6}");
+        assert!(total_variation.is_finite());
+    }
+
+    #[test]
+    #[ignore = "STDIN protocol worker for tools/evaluate-ranks.mjs"]
+    fn human_rank_eval_worker() {
+        if std::env::var("SHIGUANG_EVAL_WORKER").as_deref() != Ok("1") {
+            return;
+        }
+        let resources = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+        let runtime = discover_runtime(&resources, &resources)
+            .expect("local KataGo resources are unavailable");
+        let data_dir =
+            std::env::temp_dir().join(format!("shiguang-go-rank-worker-{}", std::process::id()));
+        let mut slot = None;
+        use std::io::BufRead;
+        let stdin = std::io::stdin();
+        for line in stdin.lock().lines() {
+            let line = line.expect("read evaluation request");
+            if line.trim() == "score" {
+                println!("score-command-not-supported");
+                continue;
+            }
+            let request: super::AnalyzeRequest =
+                serde_json::from_str(&line).expect("parse evaluation request");
+            let result =
+                match super::run_analysis(&runtime, &data_dir, &mut slot, request, true, None) {
+                    Ok(result) => result,
+                    Err(error) => {
+                        println!("{}", serde_json::json!({"error": error}));
+                        continue;
+                    }
+                };
+            println!(
+                "{}",
+                serde_json::json!({
+                    "turnNumber": result.turn_number,
+                    "humanPolicy": result.human_policy,
+                    "rootInfo": result.root_info,
+                    "moveInfos": result.move_infos,
+                })
+            );
+            use std::io::Write;
+            std::io::stdout()
+                .flush()
+                .expect("flush evaluation response");
+        }
     }
 }

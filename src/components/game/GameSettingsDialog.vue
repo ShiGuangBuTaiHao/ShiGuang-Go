@@ -190,6 +190,20 @@ onBeforeUnmount(() => restoreFocus?.focus())
             </button>
           </div>
 
+          <div v-if="props.context === 'game'" class="settings-row settings-dropdown-row">
+            <span class="settings-row-icon"><Sparkles :size="18" aria-hidden="true" /></span>
+            <span class="settings-row-copy">
+              <strong>推荐落点强度</strong>
+              <small>控制推荐结果在棋盘上的提示程度</small>
+            </span>
+            <SetupDropdown
+              v-model="recommendationStrength"
+              class="settings-dropdown"
+              :options="recommendationStrengthOptions"
+              ariaLabel="推荐落点强度"
+            />
+          </div>
+
           <div v-if="props.context === 'game' && props.localMode" class="settings-row">
             <span class="settings-row-icon"><Sparkles :size="18" aria-hidden="true" /></span>
             <span class="settings-row-copy">
@@ -223,19 +237,6 @@ onBeforeUnmount(() => restoreFocus?.focus())
             />
           </div>
 
-          <div v-if="props.context === 'game' && props.localMode" class="settings-row settings-dropdown-row">
-            <span class="settings-row-icon"><Sparkles :size="18" aria-hidden="true" /></span>
-            <span class="settings-row-copy">
-              <strong>推荐落点强度</strong>
-              <small>控制推荐结果在棋盘上的提示程度</small>
-            </span>
-            <SetupDropdown
-              v-model="recommendationStrength"
-              class="settings-dropdown"
-              :options="recommendationStrengthOptions"
-              ariaLabel="推荐落点强度"
-            />
-          </div>
         </div>
       </div>
 

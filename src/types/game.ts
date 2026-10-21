@@ -29,7 +29,17 @@ export interface RefereeGameScore {
   sekiStones: string[]
 }
 
-export type GameScore = CountedGameScore | RefereeGameScore
+export interface KataGoGameScore {
+  engine: 'katago'
+  finalScore: string
+  /** Signed point margin, never Chinese zi. */
+  margin: number
+  komi: number
+  ruleSet: string
+  deadStones: string[]
+}
+
+export type GameScore = CountedGameScore | RefereeGameScore | KataGoGameScore
 
 export interface GameResult {
   winner: Stone | null

@@ -14,7 +14,19 @@ export type AiStrength = typeof AMATEUR_STRENGTHS[number] | typeof DAN_STRENGTHS
 export type AnalysisStrength = 'beginner' | 'casual' | 'normal' | 'strong' | 'expert'
 export type RecommendationStrength = 'auto' | 'low' | 'medium' | 'high' | 'ultra' | 'maximum'
 
-export const AUTO_RECOMMENDATION_BUDGETS = [300, 1200, 4000, 10000] as const
+/**
+ * Automatic recommendation stages use a matching analysis strength so the
+ * backend timeout grows with the explicit visit budget. Every stage is still
+ * a normal KataGo analysis; only the search budget changes.
+ */
+export const AUTO_RECOMMENDATION_STAGES = [
+  { maxVisits: 300, strength: 'casual' },
+  { maxVisits: 1200, strength: 'normal' },
+  { maxVisits: 4000, strength: 'strong' },
+  { maxVisits: 10000, strength: 'expert' },
+] as const
+
+export const AUTO_RECOMMENDATION_BUDGETS = AUTO_RECOMMENDATION_STAGES.map((stage) => stage.maxVisits)
 
 export const RECOMMENDATION_STRENGTHS: Record<Exclude<RecommendationStrength, 'auto'>, AnalysisStrength> = {
   low: 'beginner',
@@ -38,18 +50,65 @@ export function recommendationAnalysisStrength(value: RecommendationStrength): A
 export interface AiStrengthConfig {
   label: string
   description: string
-  group: '业余级' | '段位'
+  group: '低级' | '中级' | '高级'
   resignThreshold: number
   resignConsecutiveTurns: number
+  visitBudget: number
+  /**
+   * Zero keeps the raw Human SL distribution. Higher tiers gradually mix in
+   * the search utility without ever discarding the human move distribution.
+   */
+  searchUtilityWeight: number
+  /** Utility scale of the search correction; smaller values sharpen search. */
+  searchUtilityLambda: number
+  /** Temperature applied to humanPolicy. 1 is the raw Human SL distribution. */
+  policyTemperature: number
+  /** Keep the search's pass judgement even for the lowest ranks. */
+  allowSearchPass: boolean
+}
+
+/**
+ * Human SL is a policy model, not a calibrated Elo scale. The profile remains
+ * the source distribution; search influence and its candidate coverage grow
+ * continuously on the same 20k-to-9d rank axis.
+ */
+function rankProgress(rank: number, dan: boolean): number {
+  // One continuous axis: 20k = 0, 1k = 19/28, 1d = 20/28, 9d = 1.
+  return (dan ? 19 + rank : 20 - rank) / 28
+}
+
+function visitBudgetFor(progress: number): number {
+  return Math.round(40 + (1200 - 40) * progress ** 2)
+}
+
+function resignationConfig(): Pick<AiStrengthConfig, 'resignThreshold' | 'resignConsecutiveTurns'> {
+  // Keep resigning behavior out of the rank curve; it should not make a
+  // stronger profile abandon games sooner than a weaker one.
+  return { resignThreshold: -0.99, resignConsecutiveTurns: 20 }
+}
+
+function tieredSearchWeight(rank: number, dan: boolean): Pick<
+  AiStrengthConfig,
+  'searchUtilityWeight' | 'searchUtilityLambda' | 'policyTemperature'
+> {
+  const progress = rankProgress(rank, dan)
+  const searchProgress = progress ** 1.5
+  return {
+    searchUtilityWeight: searchProgress,
+    searchUtilityLambda: 0.48 - searchProgress * 0.4,
+    policyTemperature: 1 + (1 - progress) * 0.15,
+  }
 }
 
 function amateurConfig(rank: number): AiStrengthConfig {
   return {
     label: `${rank}级`,
-    description: rank >= 15 ? '适合入门与基础练习' : rank >= 8 ? '适合业余级对弈' : '适合进阶训练',
-    group: '业余级',
-    resignThreshold: -0.9,
-    resignConsecutiveTurns: 3,
+    description: rank >= 15 ? '保留入门级人类失误' : rank >= 8 ? '保留业余级人类失误' : '适合进阶训练',
+    group: rank >= 11 ? '低级' : '中级',
+    visitBudget: visitBudgetFor(rankProgress(rank, false)),
+    ...tieredSearchWeight(rank, false),
+    allowSearchPass: true,
+    ...resignationConfig(),
   }
 }
 
@@ -57,9 +116,11 @@ function danConfig(rank: number): AiStrengthConfig {
   return {
     label: `${rank}段`,
     description: rank <= 3 ? '适合稳定提升' : rank <= 6 ? '适合高强度训练' : '接近高段位棋力',
-    group: '段位',
-    resignThreshold: -0.9,
-    resignConsecutiveTurns: 3,
+    group: '高级',
+    visitBudget: visitBudgetFor(rankProgress(rank, true)),
+    ...tieredSearchWeight(rank, true),
+    allowSearchPass: true,
+    ...resignationConfig(),
   }
 }
 
@@ -85,38 +146,102 @@ export interface AiCandidate {
 }
 
 export interface HumanPolicySelectionOptions {
+  legalMoves?: Iterable<string>
+  boardSize?: number
+  /** Raw Human SL distribution temperature; 1 leaves the policy unchanged. */
+  temperature?: number
+  /** Search corrections keyed by normalized GTP coordinate. */
+  searchCandidates?: Iterable<AiCandidate>
+  /** Mix between Human SL (0) and search-adjusted utility (1). */
+  searchUtilityWeight?: number
+  /** Lower values make utility differences matter sooner. */
+  searchUtilityLambda?: number
+  /** AI perspective; analysis utilities are reported from Black's perspective. */
   aiColor?: 'black' | 'white'
-  strength?: AiStrength
 }
 
-function isKyuStrength(strength: AiStrength | undefined): boolean {
-  return strength?.endsWith('k') ?? false
-}
+function sampleWeightedMove(
+  moves: string[],
+  weights: number[],
+  random: () => number = Math.random,
+): string | null {
+  const normalizedWeights = weights.map((weight) =>
+    Number.isFinite(weight) && weight > 0 ? weight : 0,
+  )
+  const total = normalizedWeights.reduce((sum, weight) => sum + weight, 0)
+  if (total <= 0) return null
 
-function danUtilityTemperature(strength: AiStrength | undefined): number {
-  const dan = Number(strength?.match(/_(\d+)d$/)?.[1] ?? 1)
-  return Math.max(0.16, 0.8 - (dan - 1) * 0.08)
-}
-
-function kyuUtilityTemperature(strength: AiStrength | undefined): number {
-  const kyu = Number(strength?.match(/_(\d+)k$/)?.[1] ?? 20)
-  if (kyu >= 16) return 1.2
-  if (kyu >= 11) return 0.9
-  if (kyu >= 6) return 0.7
-  if (kyu >= 3) return 0.5
-  return 0.35
-}
-
-function sampleWeightedMove(choices: AiCandidate[], weights: number[]): string | null {
-  const total = weights.reduce((sum, weight) => sum + weight, 0)
-  if (total <= 0) return choices[0]?.move ?? null
-
-  let roll = Math.random() * total
-  for (let index = 0; index < choices.length; index += 1) {
-    roll -= weights[index]
-    if (roll <= 0) return choices[index].move
+  let roll = Math.min(Math.max(random(), 0), 1) * total
+  for (let index = 0; index < moves.length; index += 1) {
+    roll -= normalizedWeights[index]
+    if (roll <= 0) return moves[index]
   }
-  return choices[0]?.move ?? null
+  return moves[moves.length - 1] ?? null
+}
+
+function policyIndexForCoordinate(coordinate: string, boardSize = 19): number | null {
+  if (coordinate.trim().toLowerCase() === 'pass') return boardSize * boardSize
+  const letters = 'ABCDEFGHJKLMNOPQRST'
+  const col = letters.indexOf(coordinate[0]?.toUpperCase())
+  const number = Number(coordinate.slice(1))
+  const row = boardSize - number
+  if (col < 0 || col >= boardSize || !Number.isInteger(number) || row < 0 || row >= boardSize) {
+    return null
+  }
+  return row * boardSize + col
+}
+
+/** Sample from the complete legal Human SL distribution, excluding pass. */
+export function selectHumanPolicyMove(
+  humanPolicy: number[],
+  options: HumanPolicySelectionOptions = {},
+  random: () => number = Math.random,
+): string | null {
+  const boardSize = options.boardSize ?? 19
+  if (humanPolicy.length < boardSize * boardSize + 1) return null
+  const letters = 'ABCDEFGHJKLMNOPQRST'
+  const candidates = new Map<string, AiCandidate>()
+  for (const candidate of options.searchCandidates ?? []) {
+    const move = candidate.move.trim().toUpperCase()
+    if (candidate.utility == null || !Number.isFinite(candidate.utility)) continue
+    // At tiny visit budgets moveInfos can report a single, barely searched
+    // move. It must not be treated as universally better than every Human SL
+    // move that did not receive a visit.
+    if ('visits' in candidate && Number(candidate.visits) <= 0) continue
+    const current = candidates.get(move)
+    if (!current || candidate.utility > current.utility) candidates.set(move, candidate)
+  }
+  const utilityValues = Array.from(candidates.values(), (candidate) =>
+    options.aiColor === 'white' ? -candidate.utility : candidate.utility,
+  )
+  const utilityMax = utilityValues.length ? Math.max(...utilityValues) : 0
+  const mixedWeight = Math.min(Math.max(options.searchUtilityWeight ?? 0, 0), 1)
+  const lambda = Math.max(options.searchUtilityLambda ?? 0.5, 1e-3)
+  const temperature = Math.max(options.temperature ?? 1, 1e-3)
+  const moves: string[] = []
+  const weights: number[] = []
+  const legal = options.legalMoves
+    ? new Set(Array.from(options.legalMoves, (move) => move.toUpperCase()))
+    : null
+  for (let index = 0; index < boardSize * boardSize; index += 1) {
+    const probability = humanPolicy[index]
+    if (!Number.isFinite(probability) || probability <= 0) continue
+    const row = Math.floor(index / boardSize)
+    const col = index % boardSize
+    const move = `${letters[col]}${boardSize - row}`
+    if (legal && !legal.has(move)) continue
+    const searchCandidate = candidates.get(move)
+    const utilityDelta = searchCandidate
+      ? (options.aiColor === 'white' ? -searchCandidate.utility : searchCandidate.utility) - utilityMax
+      : 0
+    // Unsearched moves are neutral, not presumed good or bad. Root exploration
+    // settings in the backend expand coverage as rank strength increases.
+    const searchFactor = mixedWeight > 0 ? Math.exp(utilityDelta / lambda) : 1
+    moves.push(move)
+    // Keep policy temperature independent from search correction.
+    weights.push(Math.pow(probability, 1 / temperature) * Math.pow(searchFactor, mixedWeight))
+  }
+  return sampleWeightedMove(moves, weights, random)
 }
 
 export function updateResignationStreak(
@@ -141,31 +266,28 @@ export function distinctAiCandidates<T extends AiCandidate>(candidates: T[]): T[
   })
 }
 
-/** Choose a human-style move while suppressing moves KataGo evaluates as too costly. */
-export function selectHumanPolicyMove(
-  candidates: AiCandidate[],
-  options: HumanPolicySelectionOptions = {},
-): string | null {
-  const choices = distinctAiCandidates(candidates)
-  const first = choices[0]
-  if (!first) return null
+export function policyCoordinateIndex(coordinate: string, boardSize = 19): number | null {
+  return policyIndexForCoordinate(coordinate, boardSize)
+}
 
-  const temperature = isKyuStrength(options.strength)
-    ? kyuUtilityTemperature(options.strength)
-    : danUtilityTemperature(options.strength)
-  const utilityFromAiPerspective = choices.map((candidate) =>
-    options.aiColor === 'white' ? -candidate.utility : candidate.utility,
-  )
-  const bestUtility = Math.max(...utilityFromAiPerspective)
-  const weights = choices.map((candidate) => {
-    const humanPrior = candidate.humanPrior ?? 0
-    const prior = Number.isFinite(humanPrior) && humanPrior > 0
-      ? humanPrior
-      : Number.isFinite(candidate.prior) && candidate.prior > 0
-        ? candidate.prior
-        : 0
-    const index = choices.indexOf(candidate)
-    return prior * Math.exp((utilityFromAiPerspective[index] - bestUtility) / temperature)
-  })
-  return sampleWeightedMove(choices, weights)
+/**
+ * Low ranks need a search-backed ending check, but their ordinary moves must
+ * remain Human SL moves. Return the extra visits required for that check, or
+ * zero in the opening where the profile policy should be used untouched.
+ */
+export function passJudgementVisits(strength: AiStrength, moveNumber: number): number {
+  if (moveNumber < 60) return 0
+  return AI_STRENGTHS[strength].visitBudget
+}
+
+/** Pass only when the search explicitly ranks pass first and play is ending. */
+export function shouldAcceptSearchPass(
+  strength: AiStrength,
+  result: Pick<AiCandidate, 'move'> | undefined,
+  moveNumber: number,
+  opponentPassed = false,
+): boolean {
+  if (!AI_STRENGTHS[strength].allowSearchPass || !result) return false
+  if (result.move.trim().toLowerCase() !== 'pass') return false
+  return moveNumber >= 60 || opponentPassed
 }

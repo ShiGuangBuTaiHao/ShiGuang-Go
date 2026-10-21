@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import WinrateChart from './WinrateChart.vue'
 import type { KataGoAnalysis, WinratePoint } from '../../services/katago'
+import { positionScore } from '../../domain/scoring'
+import { displayMoveNumber, mergeWinratePoints } from './winrateChartData'
 
 const props = defineProps<{
   analysis: KataGoAnalysis | null
@@ -14,30 +16,42 @@ const emit = defineEmits<{
   (event: 'update:perspective', value: 'black' | 'white'): void
 }>()
 
+const points = computed(() => mergeWinratePoints(
+  props.history,
+  props.analysis
+    ? {
+        moveNumber: props.analysis.turnNumber,
+        ply: props.analysis.turnNumber,
+        black: props.analysis.rootInfo.winrate * 100,
+        white: 100 - props.analysis.rootInfo.winrate * 100,
+        scoreLead: props.analysis.rootInfo.scoreLead,
+        player: props.analysis.rootInfo.currentPlayer,
+      }
+    : null,
+))
+const currentPoint = computed(() => props.analysis
+  ? points.value.find((point) => displayMoveNumber(point) === props.analysis!.turnNumber)
+  : points.value.at(-1))
+
 const blackWinrate = computed(() => {
-  const historyPoint = props.history.at(-1)
-  const winrate = props.analysis?.rootInfo.winrate != null
-    ? props.analysis.rootInfo.winrate * 100
-    : historyPoint?.black ?? 50
-  return Math.min(99.9, Math.max(0.1, winrate))
+  const winrate = currentPoint.value?.black ?? 50
+  return Math.min(100, Math.max(0, winrate))
 })
 const whiteWinrate = computed(() => 100 - blackWinrate.value)
 
-const displayTurnNumber = computed(() => props.analysis?.turnNumber ?? props.history.at(-1)?.moveNumber ?? 0)
+const displayTurnNumber = computed(() => displayMoveNumber(currentPoint.value))
 
 const selectedWinrate = computed(() =>
   props.perspective === 'black' ? blackWinrate.value : whiteWinrate.value
 )
 
-const selectedScoreLead = computed(() => {
-  const lead = props.analysis?.rootInfo.scoreLead ?? props.history.at(-1)?.scoreLead ?? 0
-  return props.perspective === 'black' ? lead : -lead
-})
+const hasAnalysis = computed(() => points.value.length > 0)
 
 const currentScoreLead = computed(() => {
-  const point = props.history.find((item) => item.moveNumber === displayTurnNumber.value) ?? props.history.at(-1)
-  if (!point) return selectedScoreLead.value
-  return props.perspective === 'black' ? point.scoreLead : -point.scoreLead
+  const point = currentPoint.value
+  if (!point) return 0
+  const lead = positionScore(point.black / 100, point.scoreLead).lead
+  return props.perspective === 'black' ? lead : -lead
 })
 
 const scoreLeadClass = computed(() => {
@@ -46,12 +60,13 @@ const scoreLeadClass = computed(() => {
 })
 
 const scoreDrop = computed(() => {
-  const turnNumber = displayTurnNumber.value
-  const currentPoint = props.history.find((item) => item.moveNumber === turnNumber)
-  const previousPoint = props.history.filter((item) => item.moveNumber < turnNumber).at(-1)
-  if (!currentPoint || !previousPoint) return 0
-  const current = props.perspective === 'black' ? currentPoint.scoreLead : -currentPoint.scoreLead
-  const previous = props.perspective === 'black' ? previousPoint.scoreLead : -previousPoint.scoreLead
+  const point = currentPoint.value
+  const previousPoint = points.value.find((item) => displayMoveNumber(item) === displayTurnNumber.value - 1)
+  if (!point || !previousPoint) return null
+  const currentLead = positionScore(point.black / 100, point.scoreLead).lead
+  const previousLead = positionScore(previousPoint.black / 100, previousPoint.scoreLead).lead
+  const current = props.perspective === 'black' ? currentLead : -currentLead
+  const previous = props.perspective === 'black' ? previousLead : -previousLead
   return Math.max(0, previous - current)
 })
 
@@ -70,21 +85,26 @@ const scoreDrop = computed(() => {
       </div>
     </div>
 
-    <WinrateChart :points="history" :perspective="perspective" />
+    <WinrateChart :points="points" :perspective="perspective" />
 
     <div class="evaluation">
       <div class="winrate-values">
         <div class="metric winrate-metric">
           <span>{{ perspective === 'black' ? '黑方胜率' : '白方胜率' }}</span>
-          <strong>{{ selectedWinrate.toFixed(1) }}<small>%</small></strong>
-          <em>当前局面</em>
+          <strong v-if="hasAnalysis">{{ selectedWinrate.toFixed(1) }}<small>%</small></strong>
+          <strong v-else>--<small>%</small></strong>
+          <em>{{ hasAnalysis ? '当前局面' : '等待分析' }}</em>
         </div>
         <div class="score-lead">
           <span>当前目数差</span>
-          <strong :class="scoreLeadClass">
+          <strong v-if="hasAnalysis" :class="scoreLeadClass">
             {{ currentScoreLead > 0 ? '+' : '' }}{{ currentScoreLead.toFixed(1) }}<small>目</small>
           </strong>
-          <em>较上一手下降 <b>{{ scoreDrop.toFixed(1) }}</b> 目</em>
+          <strong v-else>--<small>目</small></strong>
+          <em v-if="hasAnalysis && displayTurnNumber > 0 && scoreDrop !== null">较上一手下降 <b>{{ scoreDrop.toFixed(1) }}</b> 目</em>
+          <em v-else-if="hasAnalysis && displayTurnNumber > 0">上一手尚未分析</em>
+          <em v-else-if="hasAnalysis">初始局面</em>
+          <em v-else>等待 KataGo 评估当前局面</em>
         </div>
       </div>
 

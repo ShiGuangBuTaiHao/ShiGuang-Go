@@ -8,18 +8,23 @@ import ControlsPanel from "../components/game/ControlsPanel.vue";
 import GameSettingsDialog from "../components/game/GameSettingsDialog.vue";
 import SaveGameRecord from "../components/library/SaveGameRecord.vue";
 import { CheckCircle2, LoaderCircle, X } from "lucide-vue-next";
-import { boardHash, coordinateLabel, positionFromCoordinate } from "../domain/go";
-import { assessPositionStability, calculateScore } from "../domain/scoring";
+import { applyMove, boardHash, coordinateLabel, positionFromCoordinate } from "../domain/go";
+import { assessPositionStability, calculateKataGoTerminalScore, calculateScore, formatScoreMargin, positionScore, ruleAwareScore } from "../domain/scoring";
+import { kataGoScoreProposal } from "../domain/kataGoScoreProposal";
+import { visibleWinratePoints } from "../components/analysis/winrateChartData";
 import { createRefereeScore, refereeKomi } from "../domain/referee";
 import { adjudicateWithGnuGo, cancelGnuGoAdjudication, cancelGnuGoRequest, estimateWithGnuGo, type GnuGoEstimate } from "../services/gnugo";
 import { assessGnuGoScoringReadiness, formatGnuGoLead, gnuGoTerritory, validateGnuGoEstimate } from "../domain/gnugoEstimate";
 import { loadBoardStyle, saveBoardStyle, type BoardStyle } from "../domain/boardTheme";
 import {
-  AUTO_RECOMMENDATION_BUDGETS,
+  AUTO_RECOMMENDATION_STAGES,
+  AI_STRENGTHS,
   distinctAiCandidates,
   RECOMMENDATION_BUDGETS,
   recommendationAnalysisStrength,
+  passJudgementVisits,
   selectHumanPolicyMove,
+  shouldAcceptSearchPass,
   updateResignationStreak,
   type RecommendationStrength,
 } from "../domain/ai";
@@ -28,16 +33,18 @@ import {
   HANDICAP_OPTIONS,
   loadGameSetup,
   RULE_PRESETS,
+  saveGameSetup,
   type GameSetup,
 } from "../domain/gameSetup";
 import { useGameStore } from "../stores/game";
 import {
   analyzePosition,
   cancelAnalysis,
-  AI_STRENGTHS,
+  engineKomi,
   finalScore,
   getEngineStatus,
   type AnalysisMode,
+  type AnalysisPurpose,
   type AiStrength,
   type AnalysisStrength,
   type EngineStatus,
@@ -96,12 +103,14 @@ const scoringLoading = ref(false);
 const scoringError = ref("");
 const scoreAssessment = ref<ReturnType<typeof assessPositionStability> | null>(null);
 const scoreDeadStones = ref<Set<string>>(new Set());
-const scorePreview = ref<ReturnType<typeof calculateScore> | null>(null);
+const scorePreview = ref<GameScore | null>(null);
 const scoreApplication = ref(false);
 const scoreRequestToken = ref(0);
 const scoreProposalVisible = ref(false);
 const scoreProposalText = ref("");
 const scoreProposalCooldown = ref(0);
+let scoreProposalRequestedByKataGo = false;
+let kataGoFinalScore: string | undefined;
 const lastObservedMoveNumber = ref(0);
 const gameSettingsVisible = ref(false);
 const refereeVisible = ref(false);
@@ -198,7 +207,8 @@ const refereeSummary = computed(() => {
   const result = refereeResult.value;
   if (!result) return "";
   if (result.margin === 0) return "双方和棋";
-  return `${result.margin > 0 ? "黑方" : "白方"}胜 ${Math.abs(result.margin).toFixed(1)} 目`;
+  const display = ruleAwareScore(result.margin, result.ruleSet);
+  return `${display.margin > 0 ? "黑方" : "白方"}胜 ${formatScoreMargin(result.margin, result.ruleSet)} ${display.displayUnit}`;
 });
 const scoreTitle = computed(() =>
   current.value.moveNumber < MIN_SCORING_MOVES
@@ -257,6 +267,16 @@ watch(
   { immediate: true },
 );
 
+// A tier owns the current opponent profile. Changing it in the settings dialog
+// starts a fresh game so cached responses from the previous tier cannot leak.
+watch(aiStrength, (next, previous) => {
+  if (!isAiMode.value || next === previous || gameSetup.value.aiStrength === next) return;
+  // The game page owns the selected opponent after mount. Persist the tier
+  // without writing back into gameSetup, which would retrigger this watcher.
+  saveGameSetup({ ...gameSetup.value, aiStrength: next });
+  performReset();
+});
+
 const clockOwner = computed<Stone | null>(() => {
   if (isAiMode.value) return current.value.currentPlayer === playerColor.value ? playerColor.value : null;
   return current.value.currentPlayer;
@@ -292,7 +312,9 @@ const gameResultCopy = computed(() => {
   if (result.reason === "two-passes") return "双方连续停一手，胜负待计分";
   if (result.reason === "score") {
     if (result.winner === null) return "双方和棋";
-    return `${resultWinnerName.value}胜 ${Math.abs(result.score?.margin ?? 0).toFixed(1)}目`;
+    const score = result.score;
+    const display = ruleAwareScore(score?.margin ?? 0, score?.ruleSet ?? gameSetup.value.ruleSet);
+    return `${resultWinnerName.value}胜 ${formatScoreMargin(display.margin, score?.ruleSet ?? gameSetup.value.ruleSet)}${display.displayUnit}`;
   }
   const loser = result.loser === "black" ? blackPlayerName.value : whitePlayerName.value;
   return result.reason === "timeout" ? `${loser}超时` : `${loser}认输`;
@@ -380,7 +402,7 @@ const moveNumbers = computed<MoveNumberMarker[]>(() => {
 });
 
 const visibleWinrateHistory = computed(() =>
-  winrateHistory.value.filter((p) => p.moveNumber <= current.value.moveNumber)
+  visibleWinratePoints(winrateHistory.value, current.value.moveNumber)
 );
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -401,9 +423,10 @@ function cacheKey(
   strength: AnalysisStrength,
   humanProfile?: AiStrength,
   maxVisits?: number,
+  purpose: AnalysisPurpose = "general",
   key = positionKey(),
 ): string {
-  return `${key}:${mode}:${strength}:${humanProfile ?? "none"}:${maxVisits ?? "default"}`;
+  return `${key}:${mode}:${strength}:${humanProfile ?? "none"}:${maxVisits ?? "default"}:${purpose}`;
 }
 
 function currentClockKey(): string {
@@ -510,9 +533,11 @@ function rememberAnalysis(result: KataGoAnalysis) {
   const black = result.rootInfo.winrate * 100;
   const point: WinratePoint = {
     moveNumber: result.turnNumber,
+    ply: result.turnNumber,
     black,
     white: 100 - black,
     scoreLead: result.rootInfo.scoreLead,
+    player: result.rootInfo.currentPlayer,
   };
   winrateHistory.value = [
     ...winrateHistory.value.filter((p) => p.moveNumber !== point.moveNumber),
@@ -719,12 +744,13 @@ async function runAnalysis(
   strength: AnalysisStrength = "normal",
   humanProfile?: AiStrength,
   maxVisits?: number,
+  purpose: AnalysisPurpose = "general",
 ): Promise<KataGoAnalysis | null> {
   const token = ++analysisRequestToken;
   const generation = gameGeneration;
   const moveNumber = current.value.moveNumber;
   const moves = currentKataGoMoves();
-  const key = cacheKey(mode, strength, humanProfile, maxVisits);
+  const key = cacheKey(mode, strength, humanProfile, maxVisits, purpose);
 
   // Return cached result immediately if available
   const cached = analysisCache.get(key);
@@ -749,6 +775,10 @@ async function runAnalysis(
       gameSetup.value.komi,
       gameSetup.value.handicap,
       maxVisits,
+      {
+        boardSize: current.value.board.length,
+      },
+      purpose,
     );
     if (generation !== gameGeneration) return null;
     if (token !== analysisRequestToken) return null;
@@ -768,7 +798,7 @@ async function runAnalysis(
 }
 
 async function requestRealtimeAnalysis() {
-  if (isAiMode.value || gameFinished.value) return;
+  if (analysisLocked.value || gameFinished.value || aiThinking.value) return;
   const sequence = ++realtimeAnalysisSequence;
   const generation = gameGeneration;
   const moveNumber = current.value.moveNumber;
@@ -789,22 +819,40 @@ async function requestRealtimeAnalysis() {
 }
 
 function calculateCurrentScore(dead: Set<string>) {
-  return calculateScore(current.value.board, dead, gameSetup.value.komi, {
+  return calculateScore(current.value.board, dead, engineKomi(gameSetup.value.ruleSet, gameSetup.value.komi), {
     ruleSet: gameSetup.value.ruleSet,
     capturedByBlack: current.value.capturedByBlack,
     capturedByWhite: current.value.capturedByWhite,
   });
 }
 
-function scoreSummary(score: ReturnType<typeof calculateScore>) {
-  return `黑方 ${score.blackScore.toFixed(1)}，白方 ${score.whiteScore.toFixed(1)}，${Math.abs(score.margin).toFixed(1)} 目`;
+function scoreWinnerLabel(score: GameScore) {
+  const display = ruleAwareScore(score.margin, score.ruleSet);
+  if (Math.abs(display.displayMargin) < 0.05) return "和棋";
+  const winnerName = display.margin > 0 ? blackPlayerName.value : whitePlayerName.value;
+  return `${winnerName}获胜`;
 }
 
-function updateScorePreview() {
-  scorePreview.value = calculateCurrentScore(scoreDeadStones.value);
+function scoreWinnerDetail(score: GameScore) {
+  const display = ruleAwareScore(score.margin, score.ruleSet);
+  if (Math.abs(display.displayMargin) < 0.05) return "双方子数相同";
+  return `胜 ${formatScoreMargin(score.margin, score.ruleSet)}${display.displayUnit}`;
+}
+
+function updateScorePreview(finalScoreOverride?: string) {
+  if (finalScoreOverride !== undefined) kataGoFinalScore = finalScoreOverride;
+  scorePreview.value = kataGoFinalScore
+    ? calculateKataGoTerminalScore(current.value.board, kataGoFinalScore, scoreDeadStones.value, {
+        komi: engineKomi(gameSetup.value.ruleSet, gameSetup.value.komi),
+        ruleSet: gameSetup.value.ruleSet,
+        capturedByBlack: current.value.capturedByBlack,
+        capturedByWhite: current.value.capturedByWhite,
+      })
+    : calculateCurrentScore(scoreDeadStones.value);
 }
 
 function toggleScoringGroup(row: number, col: number) {
+  if (kataGoFinalScore) return;
   const stone = current.value.board[row]?.[col];
   if (!stone) return;
   const groupPoints = collectGroupForScoring(current.value.board, { row, col });
@@ -853,6 +901,7 @@ function closeScoring(resumeGame = true) {
   scoreAssessment.value = null;
   scorePreview.value = null;
   scoreDeadStones.value = new Set();
+  kataGoFinalScore = undefined;
   if (resumeGame && isAiMode.value && aiTurn.value && !gameFinished.value && !scoreProposalVisible.value) {
     void playAiMove();
   }
@@ -875,6 +924,8 @@ async function startScoring() {
     return;
   }
   if (current.value.moveNumber < MIN_SCORING_MOVES || gameFinished.value) return;
+  const requestedByProposal = scoreProposalRequestedByKataGo;
+  scoreProposalRequestedByKataGo = false;
   const token = ++scoreRequestToken.value;
   scoringVisible.value = true;
   territoryVisible.value = false;
@@ -883,9 +934,10 @@ async function startScoring() {
   scoringLoading.value = true;
   scoringError.value = "";
   try {
-    const result = await runAnalysis("deep", "strong", undefined, 5000);
-    if (token !== scoreRequestToken.value || !result || gameFinished.value) return;
+    const result = requestedByProposal ? null : await runAnalysis("deep", "strong", undefined, 5000);
+    if (token !== scoreRequestToken.value || (!requestedByProposal && !result) || gameFinished.value) return;
     const terminal = await finalScore(currentKataGoMoves(), gameSetup.value.ruleSet, gameSetup.value.komi);
+    if (token !== scoreRequestToken.value || !scoringVisible.value || gameFinished.value) return;
     const terminalDeadStones = new Set(
       terminal.deadStones
         .map((coordinate) => positionFromCoordinate(coordinate))
@@ -893,13 +945,15 @@ async function startScoring() {
         .filter((point) => Boolean(current.value.board[point.row]?.[point.col]))
         .map((point) => `${point.row}:${point.col}`),
     );
-    const assessment = assessPositionStability(current.value.board, result, {
-      deadStones: terminalDeadStones,
-      finalScore: terminal.finalScore,
-    });
+    const assessment = requestedByProposal
+      ? null
+      : assessPositionStability(current.value.board, result!, {
+          deadStones: terminalDeadStones,
+          finalScore: terminal.finalScore,
+        });
     scoreAssessment.value = assessment;
     scoreDeadStones.value = terminalDeadStones;
-    updateScorePreview();
+    updateScorePreview(terminal.finalScore);
     scoringVisible.value = true;
   } catch (error) {
     scoringError.value = errorText(error);
@@ -910,6 +964,8 @@ async function startScoring() {
 
 function rejectScoreProposal() {
   scoreProposalVisible.value = false;
+  scoreProposalRequestedByKataGo = false;
+  kataGoFinalScore = undefined;
   scoreProposalCooldown.value = 5;
   scoreProposalText.value = "";
   void playAiMove();
@@ -917,12 +973,14 @@ function rejectScoreProposal() {
 
 async function acceptScoreProposal() {
   scoreProposalVisible.value = false;
+  scoreProposalRequestedByKataGo = true;
   await startScoring();
 }
 
 function confirmScore() {
   const preview = scorePreview.value;
-  if (!preview || (isAiMode.value && !scoreAssessment.value?.stable)) return;
+  if (!preview || scoringLoading.value || scoringError.value
+    || (isAiMode.value && scoreAssessment.value && !scoreAssessment.value.stable)) return;
   const winner = preview.margin > 0 ? "black" : preview.margin < 0 ? "white" : null;
   const score: GameScore = {
     ...preview,
@@ -934,22 +992,43 @@ function confirmScore() {
   scoreApplication.value = false;
 }
 
-function recommendationStable(previous: KataGoAnalysis, next: KataGoAnalysis): boolean {
-  const previousCandidates = distinctMoveInfos(previous).slice(0, 3).map((candidate) => candidate.move);
-  const nextCandidates = distinctMoveInfos(next).slice(0, 3).map((candidate) => candidate.move);
-  if (!previousCandidates.length || previousCandidates[0] !== nextCandidates[0]) return false;
-  const sameLeadingCandidates = previousCandidates.every((move, index) => move === nextCandidates[index]);
+function recommendationStable(previous: KataGoAnalysis, next: KataGoAnalysis, expectedVisits: number): boolean {
+  const previousCandidates = distinctMoveInfos(previous).slice(0, 3);
+  const nextCandidates = distinctMoveInfos(next).slice(0, 3);
+  if (!previousCandidates.length || !nextCandidates.length) return false;
+  if (next.rootInfo.visits < Math.ceil(expectedVisits * 0.9)) return false;
+  if (previousCandidates[0].move.toUpperCase() !== nextCandidates[0].move.toUpperCase()) return false;
+  const nextMoves = new Set(nextCandidates.map((candidate) => candidate.move.toUpperCase()));
+  const topThreeOverlap = previousCandidates.filter((candidate) => nextMoves.has(candidate.move.toUpperCase())).length;
   const winrateDelta = Math.abs(previous.rootInfo.winrate - next.rootInfo.winrate);
   const scoreDelta = Math.abs(previous.rootInfo.scoreLead - next.rootInfo.scoreLead);
-  return sameLeadingCandidates && winrateDelta <= 0.015 && scoreDelta <= 1;
+  const utilityDelta = Math.abs(previousCandidates[0].utility - nextCandidates[0].utility);
+  const best = nextCandidates[0];
+  const second = nextCandidates[1];
+  const rootVisits = Math.max(next.rootInfo.visits, best.visits, 1);
+  const visitLead = Math.max(0, best.visits - (second?.visits ?? 0));
+  const hasClearVisitLead = best.visits >= 20 && visitLead >= Math.max(8, Math.ceil(rootVisits * 0.03));
+
+  // Stop after adjacent stages converge, while allowing a harmless reorder of
+  // lower candidates when the leading move has a clear search margin.
+  return winrateDelta <= 0.02
+    && scoreDelta <= 1.5
+    && utilityDelta <= 0.06
+    && (topThreeOverlap >= 2 || hasClearVisitLead);
 }
 
 async function runAutomaticRecommendation(): Promise<KataGoAnalysis | null> {
   let previous: KataGoAnalysis | null = null;
-  for (const maxVisits of AUTO_RECOMMENDATION_BUDGETS) {
-    const result = await runAnalysis("fast", "normal", undefined, maxVisits);
+  for (const stage of AUTO_RECOMMENDATION_STAGES) {
+    const result = await runAnalysis(
+      "fast",
+      stage.strength,
+      undefined,
+      stage.maxVisits,
+      "recommendation",
+    );
     if (!result) return null;
-    if (previous && recommendationStable(previous, result)) return result;
+    if (previous && recommendationStable(previous, result, stage.maxVisits)) return result;
     previous = result;
   }
   return previous;
@@ -971,6 +1050,7 @@ async function requestRecommendations() {
           recommendationAnalysisStrength(recommendationStrength.value),
           undefined,
           RECOMMENDATION_BUDGETS[recommendationStrength.value],
+          "recommendation",
         );
     if (
       result &&
@@ -998,13 +1078,29 @@ function closeTerritory() {
   clearShapeState();
 }
 
-function chooseAiMove(result: KataGoAnalysis): string | null {
-  const topMove = result.moveInfos.find((candidate) => candidate.order === 0);
-  if (topMove?.move.trim().toLowerCase() === "pass") return "pass";
+function legalAiMoves(): string[] {
+  const moves: string[] = [];
+  const size = current.value.board.length;
+  for (let row = 0; row < size; row += 1) {
+    for (let col = 0; col < size; col += 1) {
+      if (applyMove(current.value.board, row, col, aiColor.value)) {
+        moves.push(coordinateLabel(row, col, size));
+      }
+    }
+  }
+  return moves;
+}
 
-  const moveInfos = distinctMoveInfos(result);
-  return selectHumanPolicyMove(moveInfos, {
-    strength: aiStrength.value,
+function chooseAiMove(result: KataGoAnalysis, strength: AiStrength = aiStrength.value): string | null {
+  const config = AI_STRENGTHS[strength];
+
+  return selectHumanPolicyMove(result.humanPolicy, {
+    boardSize: current.value.board.length,
+    legalMoves: legalAiMoves(),
+    temperature: config.policyTemperature,
+    searchCandidates: result.moveInfos,
+    searchUtilityWeight: config.searchUtilityWeight,
+    searchUtilityLambda: config.searchUtilityLambda,
     aiColor: aiColor.value,
   });
 }
@@ -1023,10 +1119,16 @@ async function playAiMove() {
   aiThinking.value = true;
   try {
     // Use whatever result we have (cache or fresh fast analysis)
-    const key = cacheKey("fast", "normal", requestedStrength);
-    let result = analysisCache.get(key) ?? null;
-    if (!result) {
-      result = await analyzePosition(
+    const strengthConfig = AI_STRENGTHS[requestedStrength];
+    const key = cacheKey(
+      "fast",
+      "normal",
+      requestedStrength,
+      strengthConfig.visitBudget,
+    );
+    let moveResult = analysisCache.get(key) ?? null;
+    if (!moveResult) {
+      moveResult = await analyzePosition(
         currentKataGoMoves(),
         "fast",
         "normal",
@@ -1034,6 +1136,10 @@ async function playAiMove() {
         gameSetup.value.ruleSet,
         gameSetup.value.komi,
         gameSetup.value.handicap,
+        strengthConfig.visitBudget,
+        {
+          boardSize: current.value.board.length,
+        },
       );
       if (
         token !== aiRequestToken ||
@@ -1041,8 +1147,29 @@ async function playAiMove() {
         current.value.currentPlayer !== aiColor.value
       )
         return;
-      analysisCache.set(key, result);
-      rememberAnalysis(result);
+      analysisCache.set(key, moveResult);
+      rememberAnalysis(moveResult);
+    }
+
+    // Ordinary moves and ending judgement have separate responsibilities. A
+    // failure or stronger search for pass/resign must never replace the human
+    // policy that owns this tier's move selection.
+    let endingResult = moveResult;
+    const endingVisits = passJudgementVisits(requestedStrength, requestedMoveNumber);
+    if (endingVisits > strengthConfig.visitBudget) {
+      endingResult = await analyzePosition(
+        currentKataGoMoves(),
+        "fast",
+        "normal",
+        requestedStrength,
+        gameSetup.value.ruleSet,
+        gameSetup.value.komi,
+        gameSetup.value.handicap,
+        endingVisits,
+        {
+          boardSize: current.value.board.length,
+        },
+      );
     }
 
     if (
@@ -1054,49 +1181,24 @@ async function playAiMove() {
 
     clearEngineError();
 
-    if (scoreProposalCooldown.value === 0 && current.value.moveNumber >= MIN_SCORING_MOVES) {
-      const preliminary = assessPositionStability(current.value.board, result);
-      if (preliminary.stable) {
-        const verification = await runAnalysis("deep", "strong", undefined, 5000);
-        if (
-          token !== aiRequestToken ||
-          current.value.moveNumber !== requestedMoveNumber ||
-          current.value.currentPlayer !== aiColor.value
-        ) return;
-        let stability = verification
-          ? assessPositionStability(current.value.board, verification)
-          : preliminary;
-        if (verification) {
-          try {
-            const terminal = await finalScore(currentKataGoMoves(), gameSetup.value.ruleSet, gameSetup.value.komi);
-            const terminalDeadStones = new Set(
-              terminal.deadStones
-                .map((coordinate) => positionFromCoordinate(coordinate))
-                .filter((point): point is Position => point !== null)
-                .filter((point) => Boolean(current.value.board[point.row]?.[point.col]))
-                .map((point) => `${point.row}:${point.col}`),
-            );
-            stability = assessPositionStability(current.value.board, verification, {
-              deadStones: terminalDeadStones,
-              finalScore: terminal.finalScore,
-            });
-          } catch {
-            // A GTP final-score probe is advisory. The AI can continue playing
-            // when the optional terminal query is unavailable.
-          }
-        }
-        if (stability.stable) {
-          scoreProposalText.value = `预计${stability.winner === "black" ? "黑方" : "白方"}领先 ${Math.abs(stability.scoreLead).toFixed(1)} 目，局面已稳定`;
-          scoreProposalVisible.value = true;
-          aiThinking.value = false;
-          return;
-        }
-      }
+    const proposal = scoreProposalCooldown.value === 0
+      && current.value.moveNumber > 0
+      ? kataGoScoreProposal(endingResult)
+      : null;
+    if (proposal) {
+      const score = positionScore(
+        endingResult.rootInfo.winrate,
+        proposal.scoreLead,
+      );
+      scoreProposalText.value = `KataGo 判断${score.winner === "black" ? "黑方" : "白方"}领先 ${Math.abs(score.lead).toFixed(1)} 目`;
+      scoreProposalVisible.value = true;
+      aiThinking.value = false;
+      return;
     }
 
     // Analysis utility is reported from Black's perspective. The AI is White
     // in this mode, so negate it before applying the resignation threshold.
-    const aiUtility = aiColor.value === "black" ? result.rootInfo.utility : -result.rootInfo.utility;
+    const aiUtility = aiColor.value === "black" ? endingResult.rootInfo.utility : -endingResult.rootInfo.utility;
     if (requestedMoveNumber >= MIN_AI_RESIGN_MOVES) {
       const resignation = updateResignationStreak(aiResignStreak, aiUtility, requestedStrength);
       aiResignStreak = resignation.streak;
@@ -1111,8 +1213,16 @@ async function playAiMove() {
       aiResignStreak = 0;
     }
 
-    const selectedMove = chooseAiMove(result);
-    if (!selectedMove) throw new Error("KataGo 没有返回候选点");
+    // Keep the tier selected when this turn started. A settings change must not
+    // reinterpret a response from another profile as a stronger engine result.
+    const legalAndEndingPass = shouldAcceptSearchPass(
+      requestedStrength,
+      endingResult.moveInfos.find((candidate) => candidate.order === 0),
+      requestedMoveNumber,
+      current.value.moves.at(-1)?.coordinate === "pass",
+    );
+    const selectedMove = legalAndEndingPass ? "pass" : chooseAiMove(moveResult, requestedStrength);
+    if (!selectedMove) throw new Error("KataGo 未返回可用的 Human SL 落子策略");
     const normalizedMove = selectedMove.trim().toLowerCase();
     if (normalizedMove === "resign") {
       if (requestedMoveNumber >= MIN_AI_RESIGN_MOVES) {
@@ -1123,7 +1233,7 @@ async function playAiMove() {
       } else {
         // Ignore an engine resignation before the 75-move floor and use the
         // best legal non-resignation candidate instead.
-        const fallbackMove = result.moveInfos.find((candidate) => {
+        const fallbackMove = moveResult.moveInfos.find((candidate) => {
           const move = candidate.move.trim().toLowerCase();
           return move !== "pass" && move !== "resign";
         })?.move;
@@ -1373,7 +1483,7 @@ onMounted(async () => {
   await refreshEngineStatus();
   publishHeaderSummary();
   if (aiTurn.value) void playAiMove();
-  else if (!isAiMode.value) void requestRealtimeAnalysis();
+  else void requestRealtimeAnalysis();
 });
 
 onBeforeUnmount(() => {
@@ -1534,7 +1644,7 @@ function setBoardStyle(value: BoardStyle) {
         <div class="result-modal-mark" aria-hidden="true"><CheckCircle2 :size="24" /></div>
         <h2 id="score-proposal-title">KataGo 申请数子</h2>
         <p class="result-modal-hint">{{ scoreProposalText }}</p>
-        <p class="result-modal-hint">确认后将进入死子确认，仍可手动修正。</p>
+        <p class="result-modal-hint">确认后查看 KataGo 的计分建议；若有生死争议，请继续对局。</p>
       </div>
       <div class="result-modal-actions result-modal-actions-separated">
         <button class="result-action" type="button" @click="rejectScoreProposal">继续对局</button>
@@ -1557,10 +1667,10 @@ function setBoardStyle(value: BoardStyle) {
           <h2 id="scoring-title">正在数子</h2>
           <p class="result-modal-hint">KataGo 正在确认终局状态，请稍候</p>
         </div>
-        <template v-else-if="!isAiMode || scoreAssessment?.stable">
-          <h2 id="scoring-title">{{ scorePreview ? scoreSummary(scorePreview) : "数子完成" }}</h2>
-          <p class="score-state stable">{{ isAiMode ? "局面稳定，可以确认结果" : "双方确认棋块后，可以确认结果" }}</p>
-          <p class="result-modal-hint">点击棋块可标记为死子，再次点击恢复。</p>
+        <template v-else-if="!isAiMode || !scoreAssessment || scoreAssessment.stable">
+          <h2 id="scoring-title">{{ scorePreview ? scoreWinnerLabel(scorePreview) : "数子完成" }}</h2>
+          <p class="score-outcome-detail">{{ scorePreview ? scoreWinnerDetail(scorePreview) : "" }}</p>
+          <p v-if="isAiMode && scorePreview" class="result-modal-hint">KataGo 计分建议；未收官或特殊生死局面可能存在估算误差。</p>
         </template>
         <template v-else>
           <h2 id="scoring-title">仍有未定领地，暂不能结束对局</h2>
@@ -1571,7 +1681,7 @@ function setBoardStyle(value: BoardStyle) {
         <p v-if="scoringError" class="score-error" role="alert">{{ scoringError }}</p>
       </div>
       <div class="result-modal-actions result-modal-actions-separated">
-        <template v-if="(!isAiMode || scoreAssessment?.stable) && !scoringLoading">
+        <template v-if="(!isAiMode || !scoreAssessment || scoreAssessment.stable) && !scoringLoading">
           <button class="result-action" type="button" @click="() => closeScoring()">继续对局</button>
           <button class="result-action primary" type="button" :disabled="!scorePreview" @click="confirmScore">确认结果</button>
         </template>
@@ -1875,6 +1985,12 @@ function setBoardStyle(value: BoardStyle) {
 .scoring-body {
   display: grid;
   gap: 8px;
+}
+.score-outcome-detail {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 .scoring-loading {
   display: grid;

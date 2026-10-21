@@ -1,4 +1,4 @@
-import type { Board, Position, Stone, TerritoryMarker } from '../types/game'
+import type { Board, KataGoGameScore, Position, Stone, TerritoryMarker } from '../types/game'
 import type { KataGoAnalysis } from '../services/katago'
 
 export interface ScoreSummary {
@@ -38,6 +38,27 @@ export interface StabilityAssessment {
 export interface StabilityOptions {
   deadStones?: Set<string>
   finalScore?: string
+}
+
+export interface KataGoTerminalScoreOptions {
+  komi?: number
+  ruleSet?: string
+  capturedByBlack?: number
+  capturedByWhite?: number
+}
+
+export interface PositionScore {
+  winner: Stone | null
+  /** Black's lead in points: positive means Black, negative means White. */
+  lead: number
+}
+
+export interface RuleAwareScore {
+  /** Territory difference: positive means Black, negative means White. */
+  margin: number
+  /** Human-facing result. Chinese zi is half the engine point margin. */
+  displayMargin: number
+  displayUnit: '子' | '目'
 }
 
 const directions: ReadonlyArray<readonly [number, number]> = [
@@ -144,6 +165,7 @@ export function scoreTerritory(board: Board, deadStones: Set<string>): Territory
   return markers
 }
 
+/** Local counting preview; komi and margin are always points, not Chinese zi. */
 export function calculateScore(
   board: Board,
   deadStones: Set<string>,
@@ -216,14 +238,42 @@ function emptyPointIsUnresolved(value: number, stdev: number): boolean {
   return Math.abs(value) < 0.62 && stdev > 0.2
 }
 
-function parseFinalScore(value: string | undefined): number | null {
+export function parseFinalScore(value: string | undefined): number | null {
   if (!value) return null
   const normalized = value.trim().toUpperCase()
   if (normalized === '0' || normalized === 'JIGO') return 0
-  const match = normalized.match(/^([BW])\s*\+\s*(\d+(?:\.5)?)$/)
+  const match = normalized.match(/^([BW])\s*\+\s*(\d+(?:\.\d+)?)$/)
   if (!match) return null
   const margin = Number(match[2])
   return Number.isFinite(margin) ? (match[1] === 'B' ? margin : -margin) : null
+}
+
+/**
+ * Preserve KataGo's proposed result without fabricating per-color totals.
+ * GTP final_score can estimate an unfinished position; confirmation is separate.
+ */
+export function calculateKataGoTerminalScore(
+  board: Board,
+  finalScore: string,
+  deadStones: Iterable<string>,
+  options: KataGoTerminalScoreOptions = {},
+): KataGoGameScore {
+  const margin = parseFinalScore(finalScore)
+  if (margin === null) throw new Error(`KataGo 终局分数格式异常：${finalScore}`)
+  const dead = [...new Set(deadStones)]
+  for (const value of dead) {
+    if (!/^\d+:\d+$/.test(value)) throw new Error('KataGo 死子坐标无效')
+    const [row, col] = value.split(':').map(Number)
+    if (!board[row!]?.[col!]) throw new Error('KataGo 死子坐标未对应盘上棋子')
+  }
+  return {
+    engine: 'katago',
+    finalScore: finalScore.trim().toUpperCase(),
+    margin,
+    komi: options.komi ?? 7.5,
+    ruleSet: options.ruleSet ?? 'chinese',
+    deadStones: dead,
+  }
 }
 
 /**
@@ -301,4 +351,46 @@ export function assessPositionStability(
     deadStones,
     reasons,
   }
+}
+
+/**
+ * KataGo reports winrate from Black's perspective and scoreLead in points.
+ * Keep both values on one authoritative scale so the winner label cannot
+ * disagree with the score shown beside it.
+ */
+export function positionScore(
+  winrate: number,
+  scoreLead: number,
+): PositionScore {
+  const finiteWinrate = Number(winrate)
+  const finiteLead = Number(scoreLead)
+  const lead = Number.isFinite(finiteLead)
+    ? finiteLead
+    : Number.isFinite(finiteWinrate)
+      ? (finiteWinrate - 0.5) * 100
+      : 0
+  return {
+    winner: lead > 0 ? 'black' : lead < 0 ? 'white' : null,
+    lead,
+  }
+}
+
+/**
+ * Convert a point margin for display, not between area and territory rules.
+ * Re-evaluate with the other ruleset to obtain its score; dividing by two
+ * only converts Chinese point differences to Chinese zi.
+ */
+export function ruleAwareScore(margin: number, ruleSet: string): RuleAwareScore {
+  const original = Number(margin)
+  const displayMargin = ruleSet === 'chinese' ? original / 2 : original
+  return {
+    margin: original,
+    displayMargin,
+    displayUnit: ruleSet === 'chinese' ? '子' : '目',
+  }
+}
+
+/** Preserve quarter-zi results such as 0.25 and 3.75 without trailing zeros. */
+export function formatScoreMargin(margin: number, ruleSet: string): string {
+  return Number(Math.abs(ruleAwareScore(margin, ruleSet).displayMargin).toFixed(2)).toString()
 }

@@ -65,19 +65,30 @@ export interface KataGoAnalysis {
 
 export interface WinratePoint {
   moveNumber: number
+  /** Zero is the initial position before the first move; 1 is after move 1. */
+  ply?: number
   black: number
   white: number
   scoreLead: number
+  /** Side to play at this point when the engine value may use SIDETOMOVE. */
+  player?: GtpPlayer
 }
 
 // ── Analysis modes ─────────────────────────────────────────────────────
 
 export type AnalysisMode = 'fast' | 'deep'
+export type AnalysisPurpose = 'general' | 'recommendation'
 
 export interface AnalysisPosition {
-  initialStones: KataGoMove[]
-  initialPlayer: GtpPlayer
+  initialStones?: KataGoMove[]
+  /** Side to play before moves are replayed, not at the final position. */
+  initialPlayer?: GtpPlayer
   boardSize: number
+}
+
+/** Convert the UI's Chinese zi komi into KataGo's point komi. */
+export function engineKomi(ruleSet: RuleSet, komi: number): number {
+  return ruleSet === 'chinese' ? komi * 2 : komi
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -118,13 +129,15 @@ export async function analyzePosition(
   strength: AnalysisStrength = 'normal',
   humanProfile?: AiStrength,
   ruleSet: RuleSet = 'chinese',
-  komi = 7.5,
+  komi = ruleSet === 'chinese' ? 3.75 : ruleSet === 'japanese-korean' ? 6.5 : 7.5,
   handicap: Handicap = 0,
   maxVisits?: number,
   position?: AnalysisPosition,
+  purpose: AnalysisPurpose = 'general',
 ): Promise<KataGoAnalysis> {
   if (!isDesktopRuntime()) throw new Error('当前不是 Tauri 桌面环境')
   const engineRule = ruleSet === 'japanese-korean' ? 'japanese' : ruleSet
+  const pointKomi = engineKomi(ruleSet, komi)
   return invoke<KataGoAnalysis>('analyze_position', {
     request: {
       moves,
@@ -132,22 +145,24 @@ export async function analyzePosition(
       strength,
       humanProfile,
       ruleSet: engineRule,
-      komi,
+      komi: pointKomi,
       handicap,
       ...(maxVisits === undefined ? {} : { maxVisits }),
       ...(position ?? {}),
+      ...(purpose === 'general' ? {} : { searchProfile: purpose }),
     },
   })
 }
 
+/** GTP scoring proposal in points; unfinished and special positions may be estimated. */
 export async function finalScore(
   moves: KataGoMove[],
   ruleSet: RuleSet = 'chinese',
-  komi = 7.5,
+  komi = ruleSet === 'chinese' ? 3.75 : ruleSet === 'japanese-korean' ? 6.5 : 7.5,
 ): Promise<KataGoFinalScore> {
   if (!isDesktopRuntime()) throw new Error('当前不是 Tauri 桌面环境')
   const engineRule = ruleSet === 'japanese-korean' ? 'japanese' : ruleSet
   return invoke<KataGoFinalScore>('final_score', {
-    request: { moves, ruleSet: engineRule, komi },
+    request: { moves, ruleSet: engineRule, komi: engineKomi(ruleSet, komi) },
   })
 }

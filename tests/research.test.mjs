@@ -148,6 +148,20 @@ test('a move in the SGF root is included in analysis and survives export without
   assert.equal(again.nodes[again.rootId].snapshot.board[3][3], 'black')
 })
 
+test('full-history analysis keeps its starting player across odd and even turns', () => {
+  let tree = createResearchTree()
+  for (const [row, col] of [[3, 3], [15, 15], [3, 15]]) {
+    const before = researchAnalysisPosition(tree)
+    tree = play(tree, row, col)
+    const request = researchAnalysisPosition(tree)
+    assert.equal(before.initialPlayer, 'B')
+    assert.equal(request.initialPlayer, 'B')
+    assert.equal(request.moves.length, request.turnNumber)
+    assert.deepEqual(request.initialStones, [])
+    assert.equal(request.moves[0].player, request.initialPlayer)
+  }
+})
+
 test('analysis requests use the latest setup as initial stones and only later moves', () => {
   let tree = play(createResearchTree(), 3, 3)
   tree = editResearchSetup(tree, 10, 10, 'white')
