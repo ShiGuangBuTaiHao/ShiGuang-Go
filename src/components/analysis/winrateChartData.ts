@@ -51,6 +51,39 @@ export function visibleWinratePoints(
   return points.filter((point) => winratePly(point) <= moveNumber)
 }
 
+/**
+ * Keep the viewport width constant so density never changes with game length.
+ * `max` tracks the newest analysed ply on every move, which keeps the
+ * coordinate system moving and lets ECharts animate the newly appended point;
+ * `min` trails one window behind and never goes below zero.
+ *
+ * A minimum extent of one move keeps the axis valid at ply zero while still
+ * letting the first played move shift the frame, so the opening also animates.
+ */
+export function winrateViewport(
+  points: readonly WinratePoint[],
+  windowSize: number,
+): { min: number; max: number } {
+  const size = Math.max(1, Math.floor(windowSize))
+  const latest = points.length ? Math.max(...points.map(winratePly)) : 0
+  return { min: Math.max(0, latest - size), max: latest + 1 }
+}
+
+/**
+ * Whose stone a plotted ply represents.
+ *
+ * A point's `player` is the side *to move* in that position, so the stone that
+ * produced ply N is the opposite side. Without that hint the game is assumed to
+ * alternate from Black, which makes odd plies Black and even plies White.
+ */
+export function plyStone(point: WinratePoint | undefined, ply: number): 'black' | 'white' {
+  const rounded = Math.round(ply)
+  if (rounded <= 0) return 'black'
+  const toMove = point?.player
+  if (toMove === 'B' || toMove === 'W') return toMove === 'B' ? 'white' : 'black'
+  return rounded % 2 === 1 ? 'black' : 'white'
+}
+
 /** Analyze the chart origin first, then fill the current path backwards. */
 export function analysisRequestOrder<T>(positions: readonly T[]): T[] {
   return positions.length > 1
