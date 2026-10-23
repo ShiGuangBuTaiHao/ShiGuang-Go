@@ -2,9 +2,9 @@
 
 [中文](README.md) | [English](README.en.md)
 
-> A local AI Go desktop application for Windows. The current version is `1.1.0`.
+> A local AI Go desktop application for Windows. The current version is `1.2.0`.
 
-A Windows x64 full installer is available on the [GitHub v1.1.0 release page](https://github.com/ShiGuangBuTaiHao/ShiGuang-Go/releases/tag/v1.1.0). See the [v1.1.0 release notes](RELEASE_NOTES.md) in Chinese and verify the published checksum and hardware requirements before installation. Testing currently focuses on an RTX 4060 Laptop GPU (`sm89`); the installer is unsigned, and license review and clean-machine installation testing remain incomplete.
+A Windows x64 full installer is available on the [GitHub v1.2.0 release page](https://github.com/ShiGuangBuTaiHao/ShiGuang-Go/releases/tag/v1.2.0). See the [v1.2.0 release notes](RELEASE_NOTES.md) in Chinese and verify the published checksum and hardware requirements before installation. Testing currently focuses on an RTX 4060 Laptop GPU (`sm89`); the installer is unsigned, and license review and clean-machine installation testing remain incomplete.
 
 ## Product Overview
 
